@@ -1,6 +1,6 @@
 [tools]
 prek = "0.4.12"
-rust = "1.97.1"
+rust = { version = "1.97.1", components = ["rustfmt", "clippy"] }
 
 [tasks.check]
 description = "Everything CI runs, locally"
