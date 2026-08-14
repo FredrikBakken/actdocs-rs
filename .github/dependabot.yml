@@ -1,0 +1,47 @@
+version: 2
+
+updates:
+  # Actions are pinned to a SHA with a trailing version comment. Dependabot
+  # understands that convention and rewrites both, which is the only practical
+  # way to keep SHA-pinned actions current without doing it by hand.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Oslo"
+    open-pull-requests-limit: 5
+    # One pull request for all of them. These move together, and reviewing a
+    # checkout bump separately from a cache bump is noise rather than diligence.
+    groups:
+      actions:
+        patterns:
+          - "*"
+    # The CI regex requires Conventional Commits, and Dependabot's own title
+    # ("Bump x from a to b") does not match. `include: scope` yields
+    # `chore(deps): bump ...`, which does.
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Oslo"
+    open-pull-requests-limit: 5
+    groups:
+      # Majors are deliberately excluded, so they arrive as individual pull
+      # requests: they are the ones that need someone to read a changelog.
+      cargo:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
