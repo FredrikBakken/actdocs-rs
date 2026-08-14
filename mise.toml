@@ -1,0 +1,11 @@
+[tools]
+prek = "0.4.12"
+rust = "1.97.1"
+
+[tasks.check]
+description = "Everything CI runs, locally"
+run = [
+    "cargo fmt --all --check",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test",
+]
