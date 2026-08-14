@@ -62,7 +62,7 @@ jobs:
         run: gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
 
   binaries:
-    name: "Build ${{ matrix.label }}"
+    name: "Build ${{ matrix.target }}"
     needs:
       - version
       - release
@@ -73,16 +73,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-          - label: aarch64-apple-darwin
+          - target: aarch64-apple-darwin
             runner: macos-latest
-          - label: x86_64-apple-darwin
-            runner: macos-13
-          - label: x86_64-pc-windows-msvc
+          # Cross-compiled from Apple Silicon: the macOS SDK is universal, so
+          # this needs no cross toolchain. The free Intel runner (macos-13) has
+          # been retired, and every remaining Intel label is a billed larger
+          # runner — not worth it for a target the arm64 host can produce.
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-pc-windows-msvc
             runner: windows-latest
-    # Every runner builds for its own architecture, so no cross toolchain and no
-    # `rustup target add` is needed; the label just names what came out.
     defaults:
       run:
         shell: bash
@@ -94,6 +96,14 @@ jobs:
 
       - name: "Install pinned tools"
         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654  # v4.2.4
+
+      # Every leg now builds with an explicit --target, so the output path is
+      # uniform whether or not the host matches. mise sets RUSTUP_TOOLCHAIN, so
+      # this lands on the pinned toolchain rather than a default one.
+      - name: "Add the target"
+        env:
+          TARGET: "${{ matrix.target }}"
+        run: rustup target add "$TARGET"
 
       # Stamped, not committed: the tag is the source of truth for the version,
       # and committing back to main would retrigger this workflow. The effect is
@@ -107,24 +117,50 @@ jobs:
           grep -m1 '^version = ' Cargo.toml
 
       - name: "Build"
-        run: cargo build --release
+        env:
+          TARGET: "${{ matrix.target }}"
+        run: cargo build --release --target "$TARGET"
 
       - name: "Package"
         id: package
         env:
           TAG: "${{ needs.version.outputs.version_tag }}"
-          LABEL: "${{ matrix.label }}"
+          TARGET: "${{ matrix.target }}"
         run: |
-          name="actdocs-rs-${TAG}-${LABEL}"
+          # Git Bash on Windows ships neither sha256sum nor shasum, and macOS
+          # ships only shasum. certutil is the one hashing tool always present
+          # on a Windows runner. All three are normalised to a bare digest.
+          digest() {
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$1" | cut -d' ' -f1
+            elif command -v shasum >/dev/null 2>&1; then
+              shasum -a 256 "$1" | cut -d' ' -f1
+            else
+              certutil -hashfile "$1" SHA256 | sed -n 2p | tr -d '\r ' | tr 'A-Z' 'a-z'
+            fi
+          }
+
+          name="actdocs-rs-${TAG}-${TARGET}"
           binary="actdocs-rs"
           [[ "$RUNNER_OS" == "Windows" ]] && binary="actdocs-rs.exe"
 
           mkdir -p "dist/$name"
-          cp "target/release/$binary" "dist/$name/"
-          cp LICENSE README.md "dist/$name/"
+          cp "target/${TARGET}/release/${binary}" "dist/$name/"
+          cp LICENSE NOTICE README.md "dist/$name/"
 
           tar -czf "dist/${name}.tar.gz" -C dist "$name"
-          shasum -a 256 "dist/${name}.tar.gz" | awk '{print $1}' > "dist/${name}.tar.gz.sha256"
+
+          # Three implementations means three chances to drift, so the shape of
+          # the result is checked rather than trusted. Older certutil builds
+          # print the digest as space-separated byte pairs, for instance.
+          sum="$(digest "dist/${name}.tar.gz")"
+          if [[ ! "$sum" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "unexpected digest for ${name}.tar.gz: $sum" >&2
+            exit 1
+          fi
+
+          # Two columns, so the file works with `sha256sum -c` as downloaded.
+          printf '%s  %s\n' "$sum" "${name}.tar.gz" > "dist/${name}.tar.gz.sha256"
 
           echo "archive=dist/${name}.tar.gz" >>"$GITHUB_OUTPUT"
 
