@@ -16,9 +16,6 @@ use crate::parse::{self, Document};
 use crate::render::{index, table, usage};
 use crate::target::{self, Kind, Plan, Target};
 
-/// The document that carries the repository index.
-const INDEX_DOC: &str = "README.md";
-
 /// Generated documents leave out sections with no entries, so an action with
 /// no outputs says nothing about outputs rather than showing an empty table.
 const OMIT_EMPTY_SECTIONS: bool = true;
@@ -31,6 +28,9 @@ pub struct Options {
     /// Also write documentation under this directory, mirroring the source
     /// layout. `None` means only the document beside each source is written.
     pub docs_dir: Option<PathBuf>,
+    /// Rebuild the repository index in this document, resolved against `root`.
+    /// `None` means no index is written.
+    pub index: Option<PathBuf>,
     /// Report what would change, and write nothing.
     pub check: bool,
     /// Stamped into usage snippets. Deliberately a placeholder by default, so
@@ -57,11 +57,13 @@ impl Report {
     }
 }
 
-/// Document every target, then rebuild the index.
+/// Document every target, then rebuild the index if one was asked for.
 ///
 /// Targets are never discovered: the set is defined once, by the hook that
 /// invokes this. The index is the exception, because by nature it has to list
 /// every action in the repository rather than only the ones that just changed.
+/// That makes it expensive and surprising, so it is opt-in rather than a side
+/// effect of every run.
 pub fn run(targets: &[PathBuf], options: &Options, log: &mut dyn io::Write) -> Result<Report> {
     let mut report = Report::default();
 
@@ -171,25 +173,28 @@ fn write(
 
 /// Rebuild the index from a full listing of the repository.
 fn update_index(options: &Options, log: &mut dyn io::Write, report: &mut Report) -> Result<()> {
-    // A repository with no README has nowhere to publish an index, which is a
-    // choice rather than a mistake. One that has a README without the markers
-    // is a different matter, and `replace` reports it.
-    let Some(existing) = read_optional(&options.root.join(INDEX_DOC))? else {
+    // Without a named document there is nowhere to publish an index, and no
+    // reason to walk the repository looking for entries to put in it.
+    let Some(path) = options.index.as_deref() else {
         return Ok(());
     };
+
+    // A document that was asked for by name and is not there is a mistake, not
+    // a choice — unlike the per-source documents, which are scaffolded. One
+    // that exists without the markers is a third case, and `replace` reports it.
+    let full = options.root.join(path);
+    let existing =
+        fs::read_to_string(&full).with_context(|| format!("cannot read {}", full.display()))?;
 
     let actions = entries(&target::discover_actions(&options.root)?, options)?;
     let workflows = entries(&target::discover_workflows(&options.root)?, options)?;
     let body = index::index(&actions, &workflows);
 
-    let path = Path::new(INDEX_DOC);
     let Some(updated) = replace(&existing, doc::INDEX, &body, path, log, report)? else {
         return Ok(());
     };
 
-    if doc::write_if_changed(&options.root.join(path), &updated, options.check)?
-        == Update::WouldChange
-    {
+    if doc::write_if_changed(&full, &updated, options.check)? == Update::WouldChange {
         report.would_change = true;
     }
 
@@ -296,14 +301,26 @@ runs:
 
     const MANIFEST: &str = ".github/actions/pre-commit/action.yml";
 
+    /// The document the index tests opt in to.
+    const INDEX_DOC: &str = "README.md";
+
     fn options(root: &Path) -> Options {
         Options {
             root: root.to_path_buf(),
             docs_dir: None,
+            index: None,
             check: false,
             repo_slug: "<owner>/<repo>".to_owned(),
             ref_sha: "<sha>".to_owned(),
             ref_version: "<version>".to_owned(),
+        }
+    }
+
+    /// A run that opts in to the index, as the repository's own hook does.
+    fn indexed(root: &Path) -> Options {
+        Options {
+            index: Some(PathBuf::from(INDEX_DOC)),
+            ..options(root)
         }
     }
 
@@ -410,14 +427,41 @@ runs:
     #[test]
     fn the_index_lists_every_action() {
         let root = repository();
+        let mut log = Vec::new();
+        run(&[PathBuf::from(MANIFEST)], &indexed(root.path()), &mut log).unwrap();
+
+        let index = read_doc(root.path(), INDEX_DOC);
+        assert!(
+            index.contains("| [`pre-commit`](.github/actions/pre-commit/README.md) | Run hooks. |"),
+            "got {index}"
+        );
+    }
+
+    #[test]
+    fn no_index_is_written_without_a_target() {
+        let root = repository();
+        let before = read_doc(root.path(), INDEX_DOC);
+
         sync(root.path(), false);
 
-        assert!(
-            read_doc(root.path(), INDEX_DOC)
-                .contains("| [`pre-commit`](.github/actions/pre-commit/README.md) | Run hooks. |"),
-            "got {}",
-            read_doc(root.path(), INDEX_DOC)
+        assert_eq!(read_doc(root.path(), INDEX_DOC), before);
+    }
+
+    #[test]
+    fn a_named_index_that_is_missing_is_an_error() {
+        let root = repository();
+        let mut log = Vec::new();
+
+        let result = run(
+            &[],
+            &Options {
+                index: Some(PathBuf::from("docs/INDEX.md")),
+                ..options(root.path())
+            },
+            &mut log,
         );
+
+        assert!(result.is_err(), "a named index should not be invented");
     }
 
     #[test]
@@ -493,7 +537,7 @@ runs:
         let root = repository();
         let mut log = Vec::new();
 
-        let report = run(&[], &options(root.path()), &mut log).unwrap();
+        let report = run(&[], &indexed(root.path()), &mut log).unwrap();
 
         assert!(report.is_clean());
         assert!(read_doc(root.path(), INDEX_DOC).contains("## Available actions"));

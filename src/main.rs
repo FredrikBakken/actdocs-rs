@@ -45,8 +45,8 @@ enum Command {
 struct SyncArgs {
     /// Action or workflow files to document.
     ///
-    /// Targets are never discovered: passing none still rebuilds the index,
-    /// which by nature has to list every action in the repository.
+    /// Targets are never discovered: the set is defined by the caller. Passing
+    /// none is only useful together with `--index-target`.
     targets: Vec<PathBuf>,
 
     /// Also write documentation under this directory, mirroring the source
@@ -55,6 +55,13 @@ struct SyncArgs {
     /// Without it, only the document beside each source is written.
     #[arg(long, value_name = "DIR")]
     docs_dir_target: Option<PathBuf>,
+
+    /// Rebuild the repository index between the index markers of this file.
+    ///
+    /// The index lists every action and reusable workflow in the repository,
+    /// not only the targets given. Without this flag no index is written.
+    #[arg(long, value_name = "FILE")]
+    index_target: Option<PathBuf>,
 
     /// Report whether any file would change, and write nothing.
     #[arg(long)]
@@ -128,6 +135,7 @@ fn sync(args: SyncArgs) -> Result<Outcome> {
     let options = Options {
         root: args.root,
         docs_dir: args.docs_dir_target,
+        index: args.index_target,
         check: args.check,
         repo_slug: args.repo_slug,
         ref_sha: args.ref_sha,
