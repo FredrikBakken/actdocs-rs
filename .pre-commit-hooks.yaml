@@ -1,0 +1,29 @@
+# Consumed by pre-commit and prek from a repo + rev. Every option here is a
+# default the consumer can override in their own config.
+- id: actdocs
+  name: "Generate action and workflow documentation"
+  description: >-
+    Rewrites the generated regions of the document beside each action and
+    reusable workflow. Everything outside the markers is left alone.
+  entry: actdocs-rs sync
+  language: rust
+  # Routing is by file name, so a loose pattern would drop a .md beside any
+  # YAML in the repository. This matches GitHub's own layout, which is also
+  # what the index discovers. Case-sensitive on purpose: GitHub does not treat
+  # CI.YML as a workflow, and neither does this.
+  files: ^\.github/(actions/.+/action\.ya?ml|workflows/[^/]+\.ya?ml)$
+  # With --index-target every invocation rewrites one shared file, and a long
+  # file list is otherwise split into batches that would race each other.
+  require_serial: true
+
+- id: actdocs-check
+  name: "Check action and workflow documentation"
+  description: >-
+    Fails if any generated document is out of date, and writes nothing.
+    Intended for CI, where a rewritten file is not a useful signal.
+  # --check lives in the entry rather than in args, so that a consumer setting
+  # args for --docs-dir-target cannot silently turn the check into a rewrite.
+  entry: actdocs-rs sync --check
+  language: rust
+  files: ^\.github/(actions/.+/action\.ya?ml|workflows/[^/]+\.ya?ml)$
+  require_serial: true

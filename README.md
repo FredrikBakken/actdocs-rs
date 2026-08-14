@@ -61,6 +61,59 @@ where "would change" is the signal worth having.
 A document with no markers is reported rather than overwritten. A document that
 does not exist yet is scaffolded once.
 
+## Use as a hook
+
+This repository is itself a hook repository, so a project consumes it by
+reference rather than installing anything:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/FredrikBakken/actdocs-rs
+    rev: v0.1.0
+    hooks:
+      - id: actdocs
+        args: ["--docs-dir-target", "docs", "--index-target", "README.md"]
+```
+
+```toml
+# prek.toml
+[[repos]]
+repo = "https://github.com/FredrikBakken/actdocs-rs"
+rev = "v0.1.0"
+hooks = [
+    { id = "actdocs", args = [
+        "--docs-dir-target", "docs",
+        "--index-target", "README.md",
+    ] },
+]
+```
+
+| Hook | Behaviour |
+| :--- | :--- |
+| `actdocs` | Rewrites documents in place. For local commits |
+| `actdocs-check` | Fails if anything is out of date, and writes nothing. For CI |
+
+Both accept the flags above through `args`, and both are built from source on
+first use - no separate installation step, and nothing to keep in step with the
+pinned `rev`.
+
+Neither writes into a documentation tree nor touches an index unless asked to,
+so `{ id = "actdocs" }` on its own updates only the document beside each
+source. `--index-target` is the one flag that names a document which must
+already exist, with the index markers already in it: unlike the per-source
+documents, an index is never scaffolded.
+
+By default the hooks match `.github/actions/*/action.yml` and
+`.github/workflows/*.yml`, which is where GitHub requires those files to live.
+Routing is by file name, so widening `files` beyond that will generate
+documents beside any YAML it is handed.
+
+Releases here are immutable, which means a published tag is locked to its
+commit and can never be moved, deleted or reused. Pinning `rev` to a tag
+therefore carries the same guarantee as pinning a commit SHA, without the
+unreadability.
+
 ## Development
 
 ```sh
