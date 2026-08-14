@@ -53,13 +53,23 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # `gh release create` creates the tag at --target itself, so there is no
-      # separate tag push and no need for persisted git credentials.
-      - name: "Create release"
+      # Created as a draft. An immutable release freezes its assets the moment
+      # it is published, so every binary has to be attached first. The draft is
+      # also the better failure mode: a build that dies leaves an unpublished
+      # release rather than a published one missing half its platforms.
+      #
+      # The tag is created at --target when the draft is published, so there is
+      # still no separate tag push and no need for persisted git credentials.
+      - name: "Create draft release"
         env:
           GH_TOKEN: "${{ github.token }}"
           TAG: "${{ needs.version.outputs.version_tag }}"
-        run: gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+        run: |
+          gh release create "$TAG" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes
 
   binaries:
     name: "Build ${{ matrix.target }}"
@@ -170,6 +180,28 @@ jobs:
           TAG: "${{ needs.version.outputs.version_tag }}"
           ARCHIVE: "${{ steps.package.outputs.archive }}"
         run: gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --clobber
+
+  publish:
+    name: "Publish release"
+    needs:
+      - version
+      - binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Publishing is the step that makes the release immutable, so it goes last
+      # and only once. `needs: binaries` waits for the whole matrix despite
+      # fail-fast: false, so a single failed platform leaves the release a draft
+      # — retryable, rather than permanently wrong.
+      - name: "Publish"
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          # No checkout here, so gh has no git remote to infer the repo from.
+          GH_REPO: "${{ github.repository }}"
+          TAG: "${{ needs.version.outputs.version_tag }}"
+        run: gh release edit "$TAG" --draft=false --latest
+
 
   #publish:
   #  name: "Publish to crates.io"
