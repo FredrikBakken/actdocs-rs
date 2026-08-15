@@ -40,6 +40,27 @@ pub enum Kind {
     Workflow,
 }
 
+/// This names what becomes of the document *beside the source*, and nothing
+/// else: the mirrored copy is `--docs-dir-target`'s business and is written
+/// whenever a root is named. So `Beside` together with a documentation root
+/// means both, and `DocsDir` is how you ask for the mirror alone.
+///
+/// Only workflows have the choice. An action already owns a directory, so its
+/// README sits alone in it; every workflow in a repository shares one
+/// directory, and a `.md` beside each `.yml` doubles the length of the one
+/// listing people actually scroll through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Placement {
+    /// `.github/workflows/lint.md`, next to the workflow it describes — plus
+    /// the mirror, where a documentation root was named.
+    #[default]
+    Beside,
+    /// Under the documentation root and nowhere else, leaving the workflow
+    /// directory to workflows.
+    DocsDir,
+}
+
 /// A link from a generated document back to the file it was generated from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
@@ -71,6 +92,11 @@ pub struct Target {
     pub source: PathBuf,
     /// Every document to write. The first is the canonical one.
     pub plans: Vec<Plan>,
+    /// A document that a different placement would have written, and this one
+    /// will not. Reported rather than removed: everything outside the markers
+    /// is hand-written, and a generator that deletes prose it did not produce
+    /// is one nobody trusts twice.
+    pub orphan: Option<PathBuf>,
 }
 
 impl Target {
@@ -100,14 +126,13 @@ impl Target {
 
 /// Decide what a path is and what it generates.
 ///
-/// A document beside the source is always written. A mirrored copy under
-/// `docs_dir` is written only when one was asked for: where a repository
-/// publishes its documentation is a choice, and a tool that scatters files into
-/// `docs/` uninvited is one that has to be argued with.
+/// A mirrored copy under `docs_dir` is written only when one was asked for:
+/// where a repository publishes its documentation is a choice, and a tool that
+/// scatters files into `docs/` uninvited is one that has to be argued with.
 ///
 /// Returns `None` only for a path with no usable file name, which a hook runner
 /// will never produce.
-pub fn classify(source: &Path, docs_dir: Option<&Path>) -> Option<Target> {
+pub fn classify(source: &Path, docs_dir: Option<&Path>, workflows: Placement) -> Option<Target> {
     let (kind, title, beside) = if is_manifest(source) {
         let directory = source.parent()?;
         let title = directory.file_name()?.to_str()?.to_owned();
@@ -117,20 +142,7 @@ pub fn classify(source: &Path, docs_dir: Option<&Path>) -> Option<Target> {
         (Kind::Workflow, title, source.with_extension(DOC_EXTENSION))
     };
 
-    // No link: a document sitting next to its source does not need to point at
-    // something the reader is already looking at.
-    //
-    // Both kinds carry a usage snippet. Calling a reusable workflow means
-    // knowing it is a job rather than a step, that the path names the file,
-    // and that secrets and permissions need their own blocks — which is more
-    // to remember than an action step, not less.
-    let mut plans = vec![Plan {
-        path: beside,
-        link: None,
-        usage: true,
-    }];
-
-    if let Some(root) = docs_dir {
+    let mirror = docs_dir.map(|root| {
         let subdirectory = match kind {
             Kind::Action => ACTIONS_SUBDIR,
             Kind::Workflow => WORKFLOWS_SUBDIR,
@@ -139,18 +151,41 @@ pub fn classify(source: &Path, docs_dir: Option<&Path>) -> Option<Target> {
             .join(subdirectory)
             .join(format!("{title}.{DOC_EXTENSION}"));
 
-        plans.push(Plan {
+        Plan {
             link: Some(link_to(source, &path)),
             path,
             usage: true,
+        }
+    });
+
+    // Displaces a workflow only, and only where there is somewhere for it to
+    // go: dropping the document beside the source with no mirror to replace it
+    // would document the file nowhere at all.
+    let displaced = kind == Kind::Workflow && workflows == Placement::DocsDir && mirror.is_some();
+
+    // No link on the document beside the source: it does not need to point at
+    // something the reader is already looking at.
+    //
+    // Both kinds carry a usage snippet. Calling a reusable workflow means
+    // knowing it is a job rather than a step, that the path names the file,
+    // and that secrets and permissions need their own blocks — which is more
+    // to remember than an action step, not less.
+    let mut plans = Vec::new();
+    if !displaced {
+        plans.push(Plan {
+            path: beside.clone(),
+            link: None,
+            usage: true,
         });
     }
+    plans.extend(mirror);
 
     Some(Target {
         kind,
         title,
         source: source.to_path_buf(),
         plans,
+        orphan: displaced.then_some(beside),
     })
 }
 
@@ -267,11 +302,16 @@ mod tests {
     const WORKFLOW: &str = ".github/workflows/lint.yml";
 
     fn action(docs: Option<&str>) -> Target {
-        classify(Path::new(MANIFEST), docs.map(Path::new)).unwrap()
+        classify(Path::new(MANIFEST), docs.map(Path::new), Placement::Beside).unwrap()
     }
 
     fn workflow(docs: Option<&str>) -> Target {
-        classify(Path::new(WORKFLOW), docs.map(Path::new)).unwrap()
+        classify(Path::new(WORKFLOW), docs.map(Path::new), Placement::Beside).unwrap()
+    }
+
+    /// A workflow whose document is configured to live under the docs root.
+    fn displaced(docs: Option<&str>) -> Target {
+        classify(Path::new(WORKFLOW), docs.map(Path::new), Placement::DocsDir).unwrap()
     }
 
     #[test]
@@ -347,15 +387,30 @@ mod tests {
 
     #[test]
     fn the_yaml_spelling_of_a_manifest_is_also_an_action() {
-        let target = classify(Path::new(".github/actions/x/action.yaml"), None).unwrap();
+        let target = classify(
+            Path::new(".github/actions/x/action.yaml"),
+            None,
+            Placement::Beside,
+        )
+        .unwrap();
         assert_eq!(target.kind, Kind::Action);
         assert_eq!(target.title, "x");
     }
 
     #[test]
     fn both_kinds_carry_a_usage_snippet() {
-        let action = classify(Path::new(".github/actions/greet/action.yml"), None).unwrap();
-        let workflow = classify(Path::new(".github/workflows/release.yml"), None).unwrap();
+        let action = classify(
+            Path::new(".github/actions/greet/action.yml"),
+            None,
+            Placement::Beside,
+        )
+        .unwrap();
+        let workflow = classify(
+            Path::new(".github/workflows/release.yml"),
+            None,
+            Placement::Beside,
+        )
+        .unwrap();
 
         assert!(action.plans.iter().all(|plan| plan.usage));
         assert!(workflow.plans.iter().all(|plan| plan.usage));
@@ -385,6 +440,68 @@ mod tests {
             ".github/actions/pre-commit/README.md"
         );
         assert_eq!(workflow(None).index_href(), ".github/workflows/lint.md");
+    }
+
+    #[test]
+    fn a_workflow_can_be_kept_out_of_the_workflow_directory() {
+        assert_eq!(
+            displaced(Some("docs")).plans,
+            [Plan {
+                path: PathBuf::from("docs/workflows/lint.md"),
+                link: Some(Link {
+                    target: ".github/workflows/lint.yml".to_owned(),
+                    href: "../../.github/workflows/lint.yml".to_owned(),
+                }),
+                usage: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn the_displaced_document_is_named_rather_than_forgotten() {
+        assert_eq!(
+            displaced(Some("docs")).orphan,
+            Some(PathBuf::from(".github/workflows/lint.md"))
+        );
+        assert_eq!(workflow(Some("docs")).orphan, None);
+    }
+
+    #[test]
+    fn an_action_keeps_its_readme_whatever_workflows_do() {
+        let target = classify(
+            Path::new(MANIFEST),
+            Some(Path::new("docs")),
+            Placement::DocsDir,
+        )
+        .unwrap();
+
+        assert_eq!(
+            target.plans[0].path,
+            PathBuf::from(".github/actions/pre-commit/README.md")
+        );
+        assert_eq!(target.orphan, None);
+    }
+
+    #[test]
+    fn a_workflow_stays_put_when_there_is_nowhere_to_move_it() {
+        // Rejected one layer up, in the configuration. Defended here anyway,
+        // because a library that silently documented nothing would be a trap.
+        assert_eq!(
+            displaced(None).plans,
+            [Plan {
+                path: PathBuf::from(".github/workflows/lint.md"),
+                link: None,
+                usage: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_displaced_workflow_is_indexed_where_it_actually_lives() {
+        assert_eq!(
+            displaced(Some("docs")).index_href(),
+            "docs/workflows/lint.md"
+        );
     }
 
     fn repository() -> tempfile::TempDir {
@@ -449,5 +566,25 @@ mod tests {
         assert!(!is_workflow_file("CI.YML"));
         // A dotfile is a name, not an extension.
         assert!(!is_workflow_file(".yml"));
+    }
+
+    #[test]
+    fn a_named_documentation_root_means_both_places_unless_told_otherwise() {
+        // `beside` is not `beside only`. Naming a documentation root asks for
+        // the mirror either way; this flag decides only whether the document
+        // beside the source survives.
+        let paths: Vec<_> = workflow(Some("docs"))
+            .plans
+            .iter()
+            .map(|plan| plan.path.clone())
+            .collect();
+
+        assert_eq!(
+            paths,
+            [
+                PathBuf::from(".github/workflows/lint.md"),
+                PathBuf::from("docs/workflows/lint.md"),
+            ]
+        );
     }
 }

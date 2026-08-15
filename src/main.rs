@@ -21,6 +21,7 @@ use actdocs_rs::config::Config;
 use actdocs_rs::parse::{self, Document};
 use actdocs_rs::render::{table, usage};
 use actdocs_rs::sync;
+use actdocs_rs::target::Placement;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -64,6 +65,16 @@ struct SyncArgs {
     /// Without it, only the document beside each source is written.
     #[arg(long, value_name = "DIR")]
     docs_dir_target: Option<PathBuf>,
+
+    /// Where workflow documents are written [default: beside].
+    ///
+    /// `beside` writes `.github/workflows/lint.md` next to the workflow, and
+    /// the mirror as well if `--docs-dir-target` was given. `docs-dir` writes
+    /// only the mirror, which keeps the workflow directory to workflows and
+    /// therefore requires that flag. Actions are unaffected: each already has
+    /// a directory of its own.
+    #[arg(long, value_enum)]
+    workflow_docs: Option<WorkflowDocs>,
 
     /// Rebuild the repository index between the index markers of this file.
     ///
@@ -143,6 +154,22 @@ impl From<Pin> for usage::Pin {
     }
 }
 
+/// Mirrors `target::Placement`, for the same reason `Pin` is mirrored.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum WorkflowDocs {
+    Beside,
+    DocsDir,
+}
+
+impl From<WorkflowDocs> for Placement {
+    fn from(placement: WorkflowDocs) -> Self {
+        match placement {
+            WorkflowDocs::Beside => Self::Beside,
+            WorkflowDocs::DocsDir => Self::DocsDir,
+        }
+    }
+}
+
 /// Whether the run left the working tree as it found it.
 ///
 /// Nothing constructs these until the commands are implemented.
@@ -175,13 +202,14 @@ fn sync(args: SyncArgs) -> Result<Outcome> {
     let cli = Config {
         docs_dir_target: args.docs_dir_target,
         index_target: args.index_target,
+        workflow_docs: args.workflow_docs.map(Into::into),
         repo_slug: args.repo_slug,
         ref_sha: args.ref_sha,
         ref_version: args.ref_version,
         pin: args.pin.map(Into::into),
     };
     let file = Config::load(&args.root, args.config.as_deref(), &mut io::stderr())?;
-    let options = cli.or(file).into_options(args.root, args.check);
+    let options = cli.or(file).into_options(args.root, args.check)?;
 
     // Diagnostics go to stderr so that a hook runner shows them without them
     // being mistaken for output.
