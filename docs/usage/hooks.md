@@ -6,28 +6,28 @@ same definitions, so pick whichever your project already uses.
 
 === "`.pre-commit-config.yaml`"
 
-    ```yaml
-    repos:
-      - repo: https://github.com/FredrikBakken/actdocs-rs
-        rev: v0.1.0
-        hooks:
-          - id: actdocs
-            args: ["--docs-dir-target", "docs", "--index-target", "README.md"]
-    ```
+  ```yaml
+  repos:
+    - repo: https://github.com/FredrikBakken/actdocs-rs
+      rev: v0.1.0
+      hooks:
+        - id: actdocs
+          args: ["--docs-dir-target", "docs", "--index-target", "README.md"]
+  ```
 
 === "`prek.toml`"
 
-    ```toml
-    [[repos]]
-    repo = "https://github.com/FredrikBakken/actdocs-rs"
-    rev = "v0.1.0"
-    hooks = [
-        { id = "actdocs", args = [
-            "--docs-dir-target", "docs",
-            "--index-target", "README.md",
-        ] },
-    ]
-    ```
+  ```toml
+  [[repos]]
+  repo = "https://github.com/FredrikBakken/actdocs-rs"
+  rev = "v0.1.0"
+  hooks = [
+      { id = "actdocs", args = [
+          "--docs-dir-target", "docs",
+          "--index-target", "README.md",
+      ] },
+  ]
+  ```
 
 Pin `rev` to the latest [release]. Releases are immutable, so a tag is locked
 to its commit and can never be moved, deleted or reused — pinning to one
