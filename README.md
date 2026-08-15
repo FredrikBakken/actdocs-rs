@@ -25,6 +25,7 @@ opt-in, so that a run only ever touches what it was pointed at:
 | Flag | Meaning |
 | :--- | :--- |
 | `--docs-dir-target DIR` | Also mirror each document to `DIR/actions/<name>.md` or `DIR/workflows/<name>.md` |
+| `--workflow-docs beside\|docs-dir` | Where a workflow's document goes; `beside` (default) writes it next to the workflow, `docs-dir` writes it only under `--docs-dir-target` |
 | `--index-target FILE` | Rebuild the repository index in `FILE`, listing every action and workflow rather than only the targets given |
 | `--check` | Report whether anything would change, and write nothing |
 | `--root` | Repository root that generated paths resolve against |
@@ -35,6 +36,15 @@ opt-in, so that a run only ever touches what it was pointed at:
 
 `--index-target` names a document that must already exist, with the index
 markers in it; unlike the per-source documents, an index is never scaffolded.
+`--workflow-docs` decides only what becomes of the document beside the
+workflow; the mirror is `--docs-dir-target`'s doing and is written whenever a
+root is named. `docs-dir` is worth having once a repository has more than a
+handful of workflows, since they all share one directory and a `.md` beside
+each `.yml` doubles what you scroll past. Actions are unaffected either way.
+
+Switching leaves any document written by an earlier setting where it is. Those
+files are named on stderr rather than deleted, because everything outside the
+markers is hand-written and this tool does not remove prose it did not produce.
 
 `--pin sha` writes `uses: owner/repo/path@<sha>  # <version>`, which resolves
 to one commit however the tag moves. `--pin version` writes
@@ -55,6 +65,7 @@ was stated, the more it wins.
 
 ```toml
 # .actdocs.toml, in the repository root
+workflow-docs = "docs-dir"
 docs-dir-target = "docs"
 index-target = "README.md"
 repo-slug = "acme/tools"

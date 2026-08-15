@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use crate::doc::{self, Update};
 use crate::parse::{self, Document};
 use crate::render::{index, table, usage};
-use crate::target::{self, Kind, Plan, Target};
+use crate::target::{self, Kind, Placement, Plan, Target};
 
 /// Generated documents leave out sections with no entries, so an action with
 /// no outputs says nothing about outputs rather than showing an empty table.
@@ -31,6 +31,9 @@ pub struct Options {
     /// Rebuild the repository index in this document, resolved against `root`.
     /// `None` means no index is written.
     pub index: Option<PathBuf>,
+    /// Where a workflow's document is written. Actions are unaffected: each
+    /// already has a directory of its own to keep a README in.
+    pub workflow_docs: Placement,
     /// Report what would change, and write nothing.
     pub check: bool,
     /// Stamped into usage snippets. Deliberately a placeholder by default, so
@@ -88,7 +91,8 @@ fn document(
     let Some(parsed) = read(&options.root, source)? else {
         return Ok(());
     };
-    let Some(target) = target::classify(source, options.docs_dir.as_deref()) else {
+    let Some(target) = target::classify(source, options.docs_dir.as_deref(), options.workflow_docs)
+    else {
         writeln!(
             log,
             "{}: not a path this tool can document",
@@ -107,6 +111,21 @@ fn document(
         )?;
         report.unwritable = true;
         return Ok(());
+    }
+
+    // Only worth saying when the file is actually there. A remark on every run
+    // in every repository that never had one is noise, and noise on stderr is
+    // how real diagnostics get scrolled past.
+    let orphan = target
+        .orphan
+        .as_ref()
+        .filter(|orphan| options.root.join(orphan).exists());
+    if let Some(orphan) = orphan {
+        writeln!(
+            log,
+            "{}: no longer updated, because workflow documents are configured for docs-dir",
+            orphan.display()
+        )?;
     }
 
     for plan in &target.plans {
@@ -211,7 +230,9 @@ fn entries(sources: &[PathBuf], options: &Options) -> Result<Vec<index::Entry>> 
         let Some(parsed) = read(&options.root, source)? else {
             continue;
         };
-        let Some(target) = target::classify(source, options.docs_dir.as_deref()) else {
+        let Some(target) =
+            target::classify(source, options.docs_dir.as_deref(), options.workflow_docs)
+        else {
             continue;
         };
 
@@ -311,6 +332,7 @@ runs:
             root: root.to_path_buf(),
             docs_dir: None,
             index: None,
+            workflow_docs: Placement::default(),
             check: false,
             repo_slug: "<owner>/<repo>".to_owned(),
             ref_sha: "<sha>".to_owned(),
@@ -596,5 +618,74 @@ runs:
             "got {doc}"
         );
         assert!(doc.contains("dry-run: true"), "got {doc}");
+    }
+
+    /// A reusable workflow, for the tests about where its document goes.
+    fn reusable(root: &Path) {
+        let workflows = root.join(".github/workflows");
+        fs::create_dir_all(&workflows).unwrap();
+        fs::write(
+            workflows.join("release.yml"),
+            "name: Release\non:\n  workflow_call:\n",
+        )
+        .unwrap();
+    }
+
+    /// A run that keeps workflow documents out of the workflow directory.
+    fn moved(root: &Path) -> Options {
+        Options {
+            docs_dir: Some(PathBuf::from("docs")),
+            workflow_docs: Placement::DocsDir,
+            ..options(root)
+        }
+    }
+
+    fn sync_release(root: &Path) -> String {
+        let mut log = Vec::new();
+        run(
+            &[PathBuf::from(".github/workflows/release.yml")],
+            &moved(root),
+            &mut log,
+        )
+        .unwrap();
+        String::from_utf8(log).unwrap()
+    }
+
+    #[test]
+    fn a_workflow_document_can_be_kept_out_of_the_workflow_directory() {
+        let root = repository();
+        reusable(root.path());
+
+        sync_release(root.path());
+
+        assert!(root.path().join("docs/workflows/release.md").is_file());
+        assert!(!root.path().join(".github/workflows/release.md").exists());
+    }
+
+    #[test]
+    fn a_document_left_behind_by_the_setting_is_named_and_kept() {
+        let root = repository();
+        reusable(root.path());
+        let orphan = root.path().join(".github/workflows/release.md");
+        fs::write(&orphan, "# Written by an earlier run\n").unwrap();
+
+        let log = sync_release(root.path());
+
+        // Named, because a stale copy nobody mentions outlives the setting
+        // that stranded it; kept, because the prose around the markers is not
+        // ours to throw away.
+        assert!(log.contains(".github/workflows/release.md"), "got {log}");
+        assert_eq!(
+            fs::read_to_string(&orphan).unwrap(),
+            "# Written by an earlier run\n"
+        );
+    }
+
+    #[test]
+    fn nothing_is_said_about_a_document_that_was_never_there() {
+        let root = repository();
+        reusable(root.path());
+
+        assert!(sync_release(root.path()).is_empty());
     }
 }

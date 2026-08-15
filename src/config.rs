@@ -13,11 +13,12 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::render::usage::Pin;
 use crate::sync::Options;
+use crate::target::Placement;
 
 /// Where a configuration file is looked for, in the order it is preferred.
 ///
@@ -51,6 +52,7 @@ const REF_VERSION: &str = "<version>";
 pub struct Config {
     pub docs_dir_target: Option<PathBuf>,
     pub index_target: Option<PathBuf>,
+    pub workflow_docs: Option<Placement>,
     pub repo_slug: Option<String>,
     pub ref_sha: Option<String>,
     pub ref_version: Option<String>,
@@ -103,6 +105,7 @@ impl Config {
         Self {
             docs_dir_target: self.docs_dir_target.or(fallback.docs_dir_target),
             index_target: self.index_target.or(fallback.index_target),
+            workflow_docs: self.workflow_docs.or(fallback.workflow_docs),
             repo_slug: self.repo_slug.or(fallback.repo_slug),
             ref_sha: self.ref_sha.or(fallback.ref_sha),
             ref_version: self.ref_version.or(fallback.ref_version),
@@ -114,18 +117,31 @@ impl Config {
     ///
     /// The two documentation targets have no default: `None` there is a
     /// decision — write nothing — rather than an unanswered question.
-    #[must_use]
-    pub fn into_options(self, root: PathBuf, check: bool) -> Options {
-        Options {
+    ///
+    /// Fails on the one combination that cannot mean anything. Moving workflow
+    /// documents into a documentation root nobody named would write them
+    /// nowhere at all, and a run that silently generates nothing costs more to
+    /// diagnose than one that refuses to start.
+    pub fn into_options(self, root: PathBuf, check: bool) -> Result<Options> {
+        let workflow_docs = self.workflow_docs.unwrap_or_default();
+        if workflow_docs == Placement::DocsDir && self.docs_dir_target.is_none() {
+            bail!(
+                "workflow-docs is docs-dir, but no docs-dir-target was given, \
+                 so workflow documents would be written nowhere"
+            );
+        }
+
+        Ok(Options {
             root,
             docs_dir: self.docs_dir_target,
             index: self.index_target,
+            workflow_docs,
             check,
             repo_slug: self.repo_slug.unwrap_or_else(|| REPO_SLUG.to_owned()),
             ref_sha: self.ref_sha.unwrap_or_else(|| REF_SHA.to_owned()),
             ref_version: self.ref_version.unwrap_or_else(|| REF_VERSION.to_owned()),
             pin: self.pin.unwrap_or_default(),
-        }
+        })
     }
 }
 
@@ -191,7 +207,9 @@ mod tests {
 
     #[test]
     fn a_default_settles_what_nothing_else_stated() {
-        let options = Config::default().into_options(PathBuf::from("."), false);
+        let options = Config::default()
+            .into_options(PathBuf::from("."), false)
+            .unwrap();
 
         assert_eq!(options.repo_slug, REPO_SLUG);
         assert_eq!(options.ref_sha, REF_SHA);
@@ -203,7 +221,9 @@ mod tests {
     fn an_unstated_documentation_target_stays_unstated() {
         // No default here on purpose: absence means "write nothing", which is
         // an answer rather than a gap.
-        let options = Config::default().into_options(PathBuf::from("."), false);
+        let options = Config::default()
+            .into_options(PathBuf::from("."), false)
+            .unwrap();
 
         assert!(options.docs_dir.is_none());
         assert!(options.index.is_none());
@@ -325,5 +345,43 @@ mod tests {
         let root = repository(&[(".actdocs.toml", "pin = \"sha\"\n")]);
 
         assert_eq!(loaded(root.path()).0.pin, Some(Pin::Sha));
+    }
+
+    #[test]
+    fn moving_workflow_documents_needs_somewhere_to_move_them() {
+        let config = Config {
+            workflow_docs: Some(Placement::DocsDir),
+            ..Config::default()
+        };
+
+        let error = config.into_options(PathBuf::from("."), false).unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("docs-dir-target"),
+            "got {error:#}"
+        );
+    }
+
+    #[test]
+    fn moving_them_is_allowed_once_there_is_a_root() {
+        let config = Config {
+            workflow_docs: Some(Placement::DocsDir),
+            docs_dir_target: Some(PathBuf::from("docs")),
+            ..Config::default()
+        };
+
+        let options = config.into_options(PathBuf::from("."), false).unwrap();
+
+        assert_eq!(options.workflow_docs, Placement::DocsDir);
+    }
+
+    #[test]
+    fn the_placement_is_named_the_way_the_flag_names_it() {
+        let root = repository(&[(".actdocs.toml", "workflow-docs = \"docs-dir\"\n")]);
+
+        assert_eq!(
+            loaded(root.path()).0.workflow_docs,
+            Some(Placement::DocsDir)
+        );
     }
 }
