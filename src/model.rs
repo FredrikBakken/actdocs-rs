@@ -84,6 +84,12 @@ pub struct Output {
     pub description: Scalar,
 }
 
+/// The scope recorded for `permissions: read-all` and `write-all`, which apply
+/// to every scope at once and name none of their own. It is not a scope a
+/// caller can write, so anything rendering a permissions block must special
+/// case it rather than printing it.
+pub const ALL_SCOPES: &str = "-";
+
 /// One scope of a workflow's top-level `permissions`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Permission {

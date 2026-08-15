@@ -248,7 +248,7 @@ fn reproduces_the_committed_usage_snippet() {
     };
 
     assert_eq!(
-        usage::snippet(
+        usage::action(
             "validate-pr-title",
             &spec,
             Reference {

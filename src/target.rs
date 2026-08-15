@@ -85,13 +85,16 @@ impl Target {
             .unwrap_or_default()
     }
 
-    /// The path a caller puts in `uses:`, which is the directory holding the
-    /// manifest rather than the manifest itself. Only an action has one.
+    /// The path a caller puts in `uses:`.
+    ///
+    /// An action is referenced by the directory holding its manifest; a
+    /// reusable workflow is referenced by the file itself, extension included.
+    /// The asymmetry is GitHub's, not ours.
     pub fn uses_path(&self) -> Option<String> {
-        if self.kind != Kind::Action {
-            return None;
+        match self.kind {
+            Kind::Action => self.source.parent().map(slashed),
+            Kind::Workflow => Some(slashed(&self.source)),
         }
-        self.source.parent().map(slashed)
     }
 }
 
@@ -114,15 +117,17 @@ pub fn classify(source: &Path, docs_dir: Option<&Path>) -> Option<Target> {
         (Kind::Workflow, title, source.with_extension(DOC_EXTENSION))
     };
 
-    // Only an action has something a caller pastes into a workflow.
-    let usage = kind == Kind::Action;
-
     // No link: a document sitting next to its source does not need to point at
     // something the reader is already looking at.
+    //
+    // Both kinds carry a usage snippet. Calling a reusable workflow means
+    // knowing it is a job rather than a step, that the path names the file,
+    // and that secrets and permissions need their own blocks — which is more
+    // to remember than an action step, not less.
     let mut plans = vec![Plan {
         path: beside,
         link: None,
-        usage,
+        usage: true,
     }];
 
     if let Some(root) = docs_dir {
@@ -137,7 +142,7 @@ pub fn classify(source: &Path, docs_dir: Option<&Path>) -> Option<Target> {
         plans.push(Plan {
             link: Some(link_to(source, &path)),
             path,
-            usage,
+            usage: true,
         });
     }
 
@@ -296,7 +301,7 @@ mod tests {
             [Plan {
                 path: PathBuf::from(".github/workflows/lint.md"),
                 link: None,
-                usage: false,
+                usage: true,
             }]
         );
     }
@@ -348,9 +353,27 @@ mod tests {
     }
 
     #[test]
-    fn only_an_action_carries_a_usage_snippet() {
-        assert!(action(Some("docs")).plans.iter().all(|plan| plan.usage));
-        assert!(workflow(Some("docs")).plans.iter().all(|plan| !plan.usage));
+    fn both_kinds_carry_a_usage_snippet() {
+        let action = classify(Path::new(".github/actions/greet/action.yml"), None).unwrap();
+        let workflow = classify(Path::new(".github/workflows/release.yml"), None).unwrap();
+
+        assert!(action.plans.iter().all(|plan| plan.usage));
+        assert!(workflow.plans.iter().all(|plan| plan.usage));
+    }
+
+    #[test]
+    fn an_action_is_referenced_by_its_directory_and_a_workflow_by_its_file() {
+        // A caller writes `uses: owner/repo/.github/actions/pre-commit@ref`
+        // but `uses: owner/repo/.github/workflows/lint.yml@ref`. The extension
+        // is GitHub's asymmetry, not an oversight here.
+        assert_eq!(
+            action(None).uses_path().as_deref(),
+            Some(".github/actions/pre-commit")
+        );
+        assert_eq!(
+            workflow(None).uses_path().as_deref(),
+            Some(".github/workflows/lint.yml")
+        );
     }
 
     #[test]
@@ -362,15 +385,6 @@ mod tests {
             ".github/actions/pre-commit/README.md"
         );
         assert_eq!(workflow(None).index_href(), ".github/workflows/lint.md");
-    }
-
-    #[test]
-    fn a_caller_references_the_directory_rather_than_the_manifest() {
-        assert_eq!(
-            action(None).uses_path().as_deref(),
-            Some(".github/actions/pre-commit")
-        );
-        assert_eq!(workflow(None).uses_path(), None);
     }
 
     fn repository() -> tempfile::TempDir {

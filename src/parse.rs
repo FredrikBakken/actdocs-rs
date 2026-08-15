@@ -6,15 +6,13 @@ use anyhow::{Result, anyhow};
 use saphyr::{LoadableYamlNode, Yaml};
 
 use crate::model::{
-    ActionInput, ActionSpec, Output, Permission, Secret, WorkflowInput, WorkflowSpec,
+    ALL_SCOPES, ActionInput, ActionSpec, Output, Permission, Secret, WorkflowInput, WorkflowSpec,
 };
 use crate::scalar::Scalar;
 
 /// `permissions: read-all` and its counterpart apply to every scope at once.
 const READ_ALL: &str = "read-all";
 const WRITE_ALL: &str = "write-all";
-/// The scope shown for the blanket forms, which name no scope of their own.
-const ALL_SCOPES: &str = "-";
 
 /// A parsed source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
