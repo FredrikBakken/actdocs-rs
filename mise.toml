@@ -1,6 +1,10 @@
 [tools]
 prek = "0.4.12"
 rust = { version = "1.97.1", components = ["rustfmt", "clippy"] }
+uv = "0.12.2"
+
+[env]
+ZENSICAL_VERSION = "0.0.54"
 
 [tasks.check]
 description = "Everything CI runs, locally"
@@ -9,3 +13,12 @@ run = [
     "cargo clippy --all-targets -- -D warnings",
     "cargo test",
 ]
+
+[tasks."docs:serve"]
+description = "Preview the documentation at localhost:8000"
+run = "uvx zensical@$ZENSICAL_VERSION serve"
+
+[tasks."docs:build"]
+description = "Build the documentation site into site/"
+# Same command locally and in CI, so a green PR means a site that builds.
+run = "uvx zensical@$ZENSICAL_VERSION build --clean --strict"

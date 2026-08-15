@@ -1,0 +1,70 @@
+name: "Documentation"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: "Build the site"
+    runs-on: ubuntu-latest
+    # A force-push supersedes the run it interrupted.
+    concurrency:
+      group: "${{ github.workflow }}-build-${{ github.ref }}"
+      cancel-in-progress: true
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Install pinned tools"
+        uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654  # v4.2.4
+
+      # Keyed on mise.toml, which is where the zensical version lives.
+      - name: "Cache the uv download cache"
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/uv
+          key: "${{ runner.os }}-uv-${{ hashFiles('mise.toml') }}"
+          restore-keys: "${{ runner.os }}-uv-"
+
+      # The same task a contributor runs locally, so a green run here means a
+      # site that actually builds rather than one that built once.
+      - name: "Build"
+        run: mise run docs:build
+
+      - name: "Upload the site"
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    name: "Publish to GitHub Pages"
+    # A pull request builds the site to prove it still builds; only main and a
+    # manual run publish it.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    # Deployments queue rather than cancel one another. Cancelling one is
+    # harmless to the live site but reports as a failure nobody needs to
+    # investigate, and two pushes a minute apart should both land.
+    concurrency:
+      group: "pages"
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: "${{ steps.deployment.outputs.page_url }}"
+    steps:
+      - name: "Deploy"
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128  # v5.0.0
