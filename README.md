@@ -28,9 +28,9 @@ opt-in, so that a run only ever touches what it was pointed at:
 | `--index-target FILE` | Rebuild the repository index in `FILE`, listing every action and workflow rather than only the targets given |
 | `--check` | Report whether anything would change, and write nothing |
 | `--root` | Repository root that generated paths resolve against |
-| `--repo-slug` | `owner/repo` stamped into usage snippets (`ACTION_REPO_SLUG`) |
-| `--ref-sha` | Commit SHA stamped into usage snippets (`ACTION_REF_SHA`) |
-| `--ref-version` | Version stamped as a trailing comment (`ACTION_REF_VERSION`) |
+| `--repo-slug` | `owner/repo` stamped into usage snippets (`ACTDOCS_REPO_SLUG`) |
+| `--ref-sha` | Commit SHA stamped into usage snippets (`ACTDOCS_REF_SHA`) |
+| `--ref-version` | Version stamped into usage snippets (`ACTDOCS_REF_VERSION`) |
 | `--pin` | `sha` (default) or `version`; how usage snippets pin the action |
 
 `--index-target` names a document that must already exist, with the index
@@ -46,6 +46,49 @@ that publishes immutable releases, and the wrong one everywhere else.
 
 `actdocs-rs generate FILE [--format json]` prints a single file's documentation
 to stdout. It exists for debugging; `sync` is the supported entry point.
+
+### Configuration
+
+Settings can come from a flag, an environment variable, a file, or a built-in
+default, resolved in that order — the more deliberately and narrowly a value
+was stated, the more it wins.
+
+```toml
+# .actdocs.toml, in the repository root
+docs-dir-target = "docs"
+index-target = "README.md"
+repo-slug = "acme/tools"
+pin = "sha"
+```
+
+Keys are the flag names without the dashes. An unrecognised key is an error
+rather than a silent no-op.
+
+`--check`, `--root` and `--config` are deliberately flag-only: the first is a
+mode of one invocation, and the other two are how the file is found. Of the
+rest, only the three stamped into usage snippets have environment variables
+(`ACTDOCS_REPO_SLUG`, `ACTDOCS_REF_SHA`, `ACTDOCS_REF_VERSION`), because those
+are facts about a CI environment. The others are repository policy, which is
+what the file is for.
+
+
+A configuration file is looked for under `--root` in this order, and the first
+that exists is the one used:
+
+| Order | Path |
+| :---- | :--- |
+| 1 | `.actdocs.toml` |
+| 2 | `actdocs.toml` |
+| 3 | `config/actdocs.toml` |
+| 4 | `.config/actdocs.toml` |
+
+They are not merged. If more than one exists, the others are named on stderr
+and ignored, so a file that is being shadowed says so rather than appearing to
+have no effect.
+
+`--config FILE` replaces the search entirely, and the file it names must exist.
+Nothing is looked for outside the repository, and no parent directories are
+searched: where you ran the command should not change what gets generated.
 
 ### Exit codes
 
