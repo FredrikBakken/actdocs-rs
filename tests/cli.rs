@@ -155,3 +155,31 @@ fn unparseable_yaml_is_a_hard_failure() {
     assert_eq!(code(&output), 2);
     assert!(String::from_utf8_lossy(&output.stderr).contains("invalid YAML"));
 }
+
+#[test]
+fn the_environment_supplies_the_reference_when_no_flag_does() {
+    let root = repository();
+    let output = Command::new(env!("CARGO_BIN_EXE_actdocs-rs"))
+        .args(["sync", "--root"])
+        .arg(root.path())
+        .arg(MANIFEST)
+        .env("ACTDOCS_REPO_SLUG", "acme/tools")
+        .env("ACTDOCS_REF_SHA", "0123456789abcdef")
+        .env("ACTDOCS_REF_VERSION", "v1.2.3")
+        .output()
+        .expect("the binary should run");
+
+    assert_eq!(
+        code(&output),
+        0,
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let readme =
+        fs::read_to_string(root.path().join(".github/actions/pre-commit/README.md")).unwrap();
+    assert!(
+        readme.contains("uses: acme/tools/.github/actions/pre-commit@0123456789abcdef  # v1.2.3"),
+        "got {readme}"
+    );
+}

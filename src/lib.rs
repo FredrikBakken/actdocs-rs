@@ -6,6 +6,7 @@
 //!   every rule for turning one into Markdown.
 //! - [`model`] describes a parsed action or workflow.
 
+pub mod config;
 pub mod doc;
 pub mod model;
 pub mod parse;

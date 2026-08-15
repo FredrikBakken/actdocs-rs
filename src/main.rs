@@ -17,9 +17,10 @@ use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use actdocs_rs::config::Config;
 use actdocs_rs::parse::{self, Document};
 use actdocs_rs::render::{table, usage};
-use actdocs_rs::sync::{self, Options};
+use actdocs_rs::sync;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -49,6 +50,14 @@ struct SyncArgs {
     /// none is only useful together with `--index-target`.
     targets: Vec<PathBuf>,
 
+    /// Read settings from this file instead of searching for one.
+    ///
+    /// A file named here must exist, and replaces the search entirely. The
+    /// search looks for `.actdocs.toml`, `actdocs.toml`, `config/actdocs.toml`
+    /// and `.config/actdocs.toml`, in that order, under `--root`.
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
+
     /// Also write documentation under this directory, mirroring the source
     /// layout as `<DIR>/actions/<name>.md` and `<DIR>/workflows/<name>.md`.
     ///
@@ -63,30 +72,35 @@ struct SyncArgs {
     #[arg(long, value_name = "FILE")]
     index_target: Option<PathBuf>,
 
-    /// Report whether any file would change, and write nothing.
-    #[arg(long)]
-    check: bool,
+    /// Repository slug stamped into usage snippets [default: <owner>/<repo>].
+    #[arg(long, env = "ACTDOCS_REPO_SLUG")]
+    repo_slug: Option<String>,
 
-    /// Repository slug stamped into usage snippets.
-    #[arg(long, env = "ACTION_REPO_SLUG", default_value = "<owner>/<repo>")]
-    repo_slug: String,
+    /// Commit SHA stamped into usage snippets [default: <sha>].
+    #[arg(long, env = "ACTDOCS_REF_SHA")]
+    ref_sha: Option<String>,
 
-    /// Commit SHA stamped into usage snippets.
-    #[arg(long, env = "ACTION_REF_SHA", default_value = "<sha>")]
-    ref_sha: String,
+    /// Version stamped into usage snippets [default: <version>].
+    #[arg(long, env = "ACTDOCS_REF_VERSION")]
+    ref_version: Option<String>,
 
-    /// Version stamped into usage snippets, as a trailing comment.
-    #[arg(long, env = "ACTION_REF_VERSION", default_value = "<version>")]
-    ref_version: String,
-
+    /// How usage snippets pin the action [default: sha].
+    ///
     /// `sha` writes `@<sha>  # <version>`, which resolves to one commit
     /// whatever happens to the tag. `version` writes `@<version>`, which is
     /// only as strong where the publishing repository has enabled immutable
     /// releases.
-    #[arg(long, value_enum, default_value_t = Pin::Sha)]
-    pin: Pin,
+    #[arg(long, value_enum)]
+    pin: Option<Pin>,
 
-    /// Repository root that generated paths are resolved against.
+    /// Report whether any file would change, and write nothing.
+    ///
+    /// Deliberately not settable from a file: it is a mode of one invocation,
+    /// not a property of the repository.
+    #[arg(long)]
+    check: bool,
+
+    /// Repository root that generated paths resolve against.
     #[arg(long, default_value = ".")]
     root: PathBuf,
 }
@@ -156,16 +170,18 @@ fn run(cli: Cli) -> Result<Outcome> {
 }
 
 fn sync(args: SyncArgs) -> Result<Outcome> {
-    let options = Options {
-        root: args.root,
-        docs_dir: args.docs_dir_target,
-        index: args.index_target,
-        check: args.check,
+    // The flags are just another layer, so precedence is one expression rather
+    // than a pile of conditionals. Clap has already resolved flag-over-env.
+    let cli = Config {
+        docs_dir_target: args.docs_dir_target,
+        index_target: args.index_target,
         repo_slug: args.repo_slug,
         ref_sha: args.ref_sha,
         ref_version: args.ref_version,
-        pin: args.pin.into(),
+        pin: args.pin.map(Into::into),
     };
+    let file = Config::load(&args.root, args.config.as_deref(), &mut io::stderr())?;
+    let options = cli.or(file).into_options(args.root, args.check);
 
     // Diagnostics go to stderr so that a hook runner shows them without them
     // being mistaken for output.

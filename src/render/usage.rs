@@ -10,7 +10,8 @@ use crate::model::{ActionInput, ActionSpec};
 /// trust. This is a policy the caller states, not something discovered: asking
 /// GitHub which repositories have immutable releases would put a network call
 /// in the middle of a generator whose whole point is reproducible output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Pin {
     /// `@<sha>  # <version>`. Resolves to one commit whatever happens to the
     /// tag afterwards, with the version alongside so the line stays readable.
