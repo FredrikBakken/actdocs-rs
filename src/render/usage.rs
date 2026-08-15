@@ -4,6 +4,24 @@ use std::fmt::Write as _;
 
 use crate::model::{ActionInput, ActionSpec};
 
+/// How a `uses:` reference is pinned.
+///
+/// Both forms can name the same commit; they differ in what a reader has to
+/// trust. This is a policy the caller states, not something discovered: asking
+/// GitHub which repositories have immutable releases would put a network call
+/// in the middle of a generator whose whole point is reproducible output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pin {
+    /// `@<sha>  # <version>`. Resolves to one commit whatever happens to the
+    /// tag afterwards, with the version alongside so the line stays readable.
+    #[default]
+    Sha,
+    /// `@<version>`. Shorter, and equivalent in integrity to a SHA only where
+    /// the publishing repository has immutable releases enabled, which locks a
+    /// release tag to its commit permanently and forbids reusing the name.
+    Version,
+}
+
 /// How a published action is referenced from a workflow.
 ///
 /// The SHA and version are supplied rather than discovered. Deriving them from
@@ -16,10 +34,13 @@ pub struct Reference<'a> {
     pub repo_slug: &'a str,
     /// The action's directory within that repository.
     pub path: &'a str,
-    /// The commit SHA to pin to.
+    /// The commit SHA. Printed only under `Pin::Sha`.
     pub sha: &'a str,
-    /// The human-readable version, shown as a trailing comment.
+    /// The human-readable version. Printed under either pin, as the reference
+    /// itself or as a trailing comment.
     pub version: &'a str,
+    /// Which of the two the snippet pins to.
+    pub pin: Pin,
 }
 
 /// Render a fenced YAML step that calls the action.
@@ -30,11 +51,18 @@ pub struct Reference<'a> {
 pub fn snippet(title: &str, spec: &ActionSpec, reference: Reference<'_>) -> String {
     let mut out = String::from("```yaml\n");
     let _ = writeln!(out, "- name: \"{title}\"");
-    let _ = writeln!(
-        out,
-        "  uses: {}/{}@{}  # {}",
-        reference.repo_slug, reference.path, reference.sha, reference.version
-    );
+    let _ = match reference.pin {
+        Pin::Sha => writeln!(
+            out,
+            "  uses: {}/{}@{}  # {}",
+            reference.repo_slug, reference.path, reference.sha, reference.version
+        ),
+        Pin::Version => writeln!(
+            out,
+            "  uses: {}/{}@{}",
+            reference.repo_slug, reference.path, reference.version
+        ),
+    };
 
     // Already ordered required-first, then by name, so filtering preserves the
     // ordering within each group.
@@ -90,6 +118,7 @@ mod tests {
             path: ".github/actions/example",
             sha: "<sha>",
             version: "<version>",
+            pin: Pin::Sha,
         }
     }
 
@@ -170,5 +199,32 @@ mod tests {
         };
 
         assert!(snippet("example", &spec, reference()).contains(r#"    tricky: "a \"b\": c\nd""#));
+    }
+
+    #[test]
+    fn a_sha_pin_is_what_a_caller_gets_by_default() {
+        // The default is a security posture, not a formatting preference, so
+        // it is asserted rather than left to whichever variant comes first.
+        assert_eq!(Pin::default(), Pin::Sha);
+    }
+
+    #[test]
+    fn a_version_pin_drops_the_sha_and_its_comment() {
+        let spec = ActionSpec::default();
+
+        assert_eq!(
+            snippet(
+                "example",
+                &spec,
+                Reference {
+                    pin: Pin::Version,
+                    ..reference()
+                }
+            ),
+            "```yaml\n\
+             - name: \"example\"\n  \
+             uses: <owner>/<repo>/.github/actions/example@<version>\n\
+             ```"
+        );
     }
 }

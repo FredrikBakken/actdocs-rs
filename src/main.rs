@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use actdocs_rs::parse::{self, Document};
-use actdocs_rs::render::table;
+use actdocs_rs::render::{table, usage};
 use actdocs_rs::sync::{self, Options};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -79,6 +79,13 @@ struct SyncArgs {
     #[arg(long, env = "ACTION_REF_VERSION", default_value = "<version>")]
     ref_version: String,
 
+    /// `sha` writes `@<sha>  # <version>`, which resolves to one commit
+    /// whatever happens to the tag. `version` writes `@<version>`, which is
+    /// only as strong where the publishing repository has enabled immutable
+    /// releases.
+    #[arg(long, value_enum, default_value_t = Pin::Sha)]
+    pin: Pin,
+
     /// Repository root that generated paths are resolved against.
     #[arg(long, default_value = ".")]
     root: PathBuf,
@@ -103,6 +110,23 @@ struct GenerateArgs {
 enum Format {
     Markdown,
     Json,
+}
+
+/// Mirrors `usage::Pin` rather than deriving `ValueEnum` on it, so the library
+/// stays free of a command line parser it has no other use for.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Pin {
+    Sha,
+    Version,
+}
+
+impl From<Pin> for usage::Pin {
+    fn from(pin: Pin) -> Self {
+        match pin {
+            Pin::Sha => Self::Sha,
+            Pin::Version => Self::Version,
+        }
+    }
 }
 
 /// Whether the run left the working tree as it found it.
@@ -140,6 +164,7 @@ fn sync(args: SyncArgs) -> Result<Outcome> {
         repo_slug: args.repo_slug,
         ref_sha: args.ref_sha,
         ref_version: args.ref_version,
+        pin: args.pin.into(),
     };
 
     // Diagnostics go to stderr so that a hook runner shows them without them
