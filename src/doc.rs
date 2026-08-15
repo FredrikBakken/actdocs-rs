@@ -373,7 +373,7 @@ Generated from [`.github/actions/pre-commit/action.yml`](../../.github/actions/p
     }
 
     #[test]
-    fn a_workflow_is_scaffolded_without_a_usage_region() {
+    fn a_scaffold_without_usage_has_only_the_generated_region() {
         let scaffolded = scaffold("ci", None, false);
 
         assert_eq!(

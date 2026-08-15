@@ -143,28 +143,27 @@ fn write(
         return Ok(());
     };
 
-    if let Document::Action(spec) = parsed {
-        // A document without the usage markers has simply opted out, which is
-        // not something to complain about.
-        if plan.usage && doc::has_markers(&contents, doc::USAGE) {
-            let uses = target.uses_path().unwrap_or_default();
-            let snippet = usage::snippet(
-                &target.title,
-                spec,
-                usage::Reference {
-                    repo_slug: &options.repo_slug,
-                    path: &uses,
-                    sha: &options.ref_sha,
-                    version: &options.ref_version,
-                    pin: options.pin,
-                },
-            );
-            let Some(updated) = replace(&contents, doc::USAGE, &snippet, &plan.path, log, report)?
-            else {
-                return Ok(());
-            };
-            contents = updated;
-        }
+    // A document without the usage markers has simply opted out, which is not
+    // something to complain about.
+    if plan.usage && doc::has_markers(&contents, doc::USAGE) {
+        let uses = target.uses_path().unwrap_or_default();
+        let reference = usage::Reference {
+            repo_slug: &options.repo_slug,
+            path: &uses,
+            sha: &options.ref_sha,
+            version: &options.ref_version,
+            pin: options.pin,
+        };
+        let snippet = match parsed {
+            Document::Action(spec) => usage::action(&target.title, spec, reference),
+            Document::Workflow(spec) => usage::workflow(&target.title, spec, reference),
+        };
+
+        let Some(updated) = replace(&contents, doc::USAGE, &snippet, &plan.path, log, report)?
+        else {
+            return Ok(());
+        };
+        contents = updated;
     }
 
     if doc::write_if_changed(&path, &contents, options.check)? == Update::WouldChange {
@@ -567,5 +566,35 @@ runs:
             "got {readme}"
         );
         assert!(!readme.contains("<sha>"), "got {readme}");
+    }
+
+    #[test]
+    fn a_reusable_workflow_gets_a_usage_snippet_too() {
+        let root = repository();
+        let workflows = root.path().join(".github/workflows");
+        fs::create_dir_all(&workflows).unwrap();
+        fs::write(
+            workflows.join("release.yml"),
+            "name: Release\non:\n  workflow_call:\n    inputs:\n      \
+             dry-run:\n        type: boolean\n        default: true\n",
+        )
+        .unwrap();
+
+        let mut log = Vec::new();
+        let report = run(
+            &[PathBuf::from(".github/workflows/release.yml")],
+            &options(root.path()),
+            &mut log,
+        )
+        .unwrap();
+        assert!(report.is_clean(), "{report:?}");
+
+        let doc = read_doc(root.path(), ".github/workflows/release.md");
+        assert!(doc.contains("jobs:\n  release:"), "got {doc}");
+        assert!(
+            doc.contains("uses: <owner>/<repo>/.github/workflows/release.yml@<sha>  # <version>"),
+            "got {doc}"
+        );
+        assert!(doc.contains("dry-run: true"), "got {doc}");
     }
 }

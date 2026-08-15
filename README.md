@@ -106,7 +106,7 @@ where "would change" is the signal worth having.
 | Pair | Contents |
 | :--- | :--- |
 | `<!-- actdocs start -->` / `<!-- actdocs end -->` | The generated tables |
-| `<!-- usage start -->` / `<!-- usage end -->` | A copy-pasteable step, actions only |
+| `<!-- usage start -->` / `<!-- usage end -->` | A copy-pasteable call — a step for an action, a job for a workflow |
 | `<!-- index start -->` / `<!-- index end -->` | The repository index, with `--index-target` |
 
 A document with no markers is reported rather than overwritten. A document that
