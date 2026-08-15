@@ -183,7 +183,7 @@ fn omit_drops_the_sections_a_workflow_lacks() {
     assert!(!rendered.contains("N/A"));
 }
 
-use actdocs_rs::render::usage::{self, Reference};
+use actdocs_rs::render::usage::{self, Pin, Reference};
 
 const VALIDATE_PR_TITLE: &str = "\
 name: \"Validate PR Title\"
@@ -256,6 +256,7 @@ fn reproduces_the_committed_usage_snippet() {
                 path: ".github/actions/validate-pr-title",
                 sha: "<sha>",
                 version: "<version>",
+                pin: Pin::Sha,
             },
         ),
         expected

@@ -38,6 +38,8 @@ pub struct Options {
     pub repo_slug: String,
     pub ref_sha: String,
     pub ref_version: String,
+    /// How usage snippets pin the action.
+    pub pin: usage::Pin,
 }
 
 /// What a run found, beyond the files it wrote.
@@ -154,6 +156,7 @@ fn write(
                     path: &uses,
                     sha: &options.ref_sha,
                     version: &options.ref_version,
+                    pin: options.pin,
                 },
             );
             let Some(updated) = replace(&contents, doc::USAGE, &snippet, &plan.path, log, report)?
@@ -313,6 +316,7 @@ runs:
             repo_slug: "<owner>/<repo>".to_owned(),
             ref_sha: "<sha>".to_owned(),
             ref_version: "<version>".to_owned(),
+            pin: usage::Pin::default(),
         }
     }
 
@@ -541,5 +545,27 @@ runs:
 
         assert!(report.is_clean());
         assert!(read_doc(root.path(), INDEX_DOC).contains("## Available actions"));
+    }
+
+    #[test]
+    fn a_version_pin_reaches_the_snippet() {
+        let root = repository();
+        let mut log = Vec::new();
+        run(
+            &[PathBuf::from(MANIFEST)],
+            &Options {
+                pin: usage::Pin::Version,
+                ..options(root.path())
+            },
+            &mut log,
+        )
+        .unwrap();
+
+        let readme = read_doc(root.path(), ".github/actions/pre-commit/README.md");
+        assert!(
+            readme.contains("uses: <owner>/<repo>/.github/actions/pre-commit@<version>\n"),
+            "got {readme}"
+        );
+        assert!(!readme.contains("<sha>"), "got {readme}");
     }
 }

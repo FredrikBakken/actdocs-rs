@@ -31,9 +31,18 @@ opt-in, so that a run only ever touches what it was pointed at:
 | `--repo-slug` | `owner/repo` stamped into usage snippets (`ACTION_REPO_SLUG`) |
 | `--ref-sha` | Commit SHA stamped into usage snippets (`ACTION_REF_SHA`) |
 | `--ref-version` | Version stamped as a trailing comment (`ACTION_REF_VERSION`) |
+| `--pin` | `sha` (default) or `version`; how usage snippets pin the action |
 
 `--index-target` names a document that must already exist, with the index
 markers in it; unlike the per-source documents, an index is never scaffolded.
+
+`--pin sha` writes `uses: owner/repo/path@<sha>  # <version>`, which resolves
+to one commit however the tag moves. `--pin version` writes
+`uses: owner/repo/path@<version>`, which is shorter and legible but only
+carries the same guarantee where the publishing repository has enabled
+immutable releases - GitHub then locks a release tag to its commit and forbids
+reusing the name, even after deletion. It is the right choice for a repository
+that publishes immutable releases, and the wrong one everywhere else.
 
 `actdocs-rs generate FILE [--format json]` prints a single file's documentation
 to stdout. It exists for debugging; `sync` is the supported entry point.
