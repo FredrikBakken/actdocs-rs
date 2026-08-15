@@ -25,10 +25,12 @@ is deleted.
 
 !!! warning "It is a claim about the publisher, not a preference"
 
-    Choosing `version` for a repository without immutable releases produces
-    snippets that look pinned and are not. Nothing here can detect the
-    difference: asking GitHub would put a network call in the middle of a
-    generator whose whole point is reproducible output.
+```text
+Choosing `version` for a repository without immutable releases produces
+snippets that look pinned and are not. Nothing here can detect the
+difference: asking GitHub would put a network call in the middle of a
+generator whose whole point is reproducible output.
+```
 
 Set it once, in a configuration file, rather than on every invocation:
 
