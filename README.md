@@ -71,7 +71,6 @@ rest, only the three stamped into usage snippets have environment variables
 are facts about a CI environment. The others are repository policy, which is
 what the file is for.
 
-
 A configuration file is looked for under `--root` in this order, and the first
 that exists is the one used:
 
