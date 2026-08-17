@@ -18,7 +18,7 @@ and `permissions` blocks that a step never needs.
 ## Quick start
 
 ```sh
-actdocs-rs sync .github/actions/*/action.yml .github/workflows/*.yml
+actdocs sync .github/actions/*/action.yml .github/workflows/*.yml
 ```
 
 That writes the document beside each source and nothing else. Publishing into
