@@ -9,7 +9,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 /// Cargo builds the binary before integration tests run and points this at it.
-const BIN: &str = env!("CARGO_BIN_EXE_actdocs-rs");
+const BIN: &str = env!("CARGO_BIN_EXE_actdocs");
 
 const MANIFEST: &str = ".github/actions/pre-commit/action.yml";
 
@@ -159,7 +159,7 @@ fn unparseable_yaml_is_a_hard_failure() {
 #[test]
 fn the_environment_supplies_the_reference_when_no_flag_does() {
     let root = repository();
-    let output = Command::new(env!("CARGO_BIN_EXE_actdocs-rs"))
+    let output = Command::new(env!("CARGO_BIN_EXE_actdocs"))
         .args(["sync", "--root"])
         .arg(root.path())
         .arg(MANIFEST)

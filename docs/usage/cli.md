@@ -1,7 +1,7 @@
 # Command line
 
 ```sh
-actdocs-rs sync \
+actdocs sync \
   --docs-dir-target docs \
   --index-target README.md \
   .github/actions/*/action.yml .github/workflows/*.yml

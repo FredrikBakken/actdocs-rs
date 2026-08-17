@@ -53,7 +53,7 @@ same guarantee as pinning a commit SHA, without the unreadability.
 ## Use directly
 
 ```sh
-actdocs-rs sync .github/actions/*/action.yml .github/workflows/*.yml
+actdocs sync .github/actions/*/action.yml .github/workflows/*.yml
 ```
 
 Targets are never discovered — the caller decides what to document. See the

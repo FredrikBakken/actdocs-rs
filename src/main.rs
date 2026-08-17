@@ -26,7 +26,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
-#[command(name = "actdocs-rs", version, about, long_about = None)]
+#[command(name = "actdocs", version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -183,7 +183,7 @@ fn main() -> ExitCode {
         Ok(Outcome::Clean) => ExitCode::SUCCESS,
         Ok(Outcome::Diff) => ExitCode::from(1),
         Err(error) => {
-            eprintln!("actdocs-rs: {error:#}");
+            eprintln!("actdocs: {error:#}");
             ExitCode::from(2)
         }
     }

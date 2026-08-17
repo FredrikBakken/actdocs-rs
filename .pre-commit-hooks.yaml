@@ -5,7 +5,7 @@
   description: >-
     Rewrites the generated regions of the document beside each action and
     reusable workflow. Everything outside the markers is left alone.
-  entry: actdocs-rs sync
+  entry: actdocs sync
   language: rust
   # Routing is by file name, so a loose pattern would drop a .md beside any
   # YAML in the repository. This matches GitHub's own layout, which is also
@@ -23,7 +23,7 @@
     Intended for CI, where a rewritten file is not a useful signal.
   # --check lives in the entry rather than in args, so that a consumer setting
   # args for --docs-dir-target cannot silently turn the check into a rewrite.
-  entry: actdocs-rs sync --check
+  entry: actdocs sync --check
   language: rust
   files: ^\.github/(actions/.+/action\.ya?ml|workflows/[^/]+\.ya?ml)$
   require_serial: true

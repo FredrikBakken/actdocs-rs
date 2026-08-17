@@ -151,8 +151,8 @@ jobs:
           }
 
           name="actdocs-rs-${TAG}-${TARGET}"
-          binary="actdocs-rs"
-          [[ "$RUNNER_OS" == "Windows" ]] && binary="actdocs-rs.exe"
+          binary="actdocs"
+          [[ "$RUNNER_OS" == "Windows" ]] && binary="actdocs.exe"
 
           mkdir -p "dist/$name"
           cp "target/${TARGET}/release/${binary}" "dist/$name/"
