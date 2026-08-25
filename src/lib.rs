@@ -15,6 +15,8 @@ pub mod scalar;
 pub mod sync;
 pub mod target;
 
-pub use model::{ActionInput, ActionSpec, Output, Permission, Secret, WorkflowInput, WorkflowSpec};
+pub use model::{
+    ActionInput, ActionSpec, Hook, Output, Permission, Secret, WorkflowInput, WorkflowSpec,
+};
 pub use parse::{Document, parse};
 pub use scalar::Scalar;

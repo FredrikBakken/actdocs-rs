@@ -52,6 +52,7 @@ const REF_VERSION: &str = "<version>";
 pub struct Config {
     pub docs_dir_target: Option<PathBuf>,
     pub index_target: Option<PathBuf>,
+    pub hooks_target: Option<PathBuf>,
     pub workflow_docs: Option<Placement>,
     pub repo_slug: Option<String>,
     pub ref_sha: Option<String>,
@@ -105,6 +106,7 @@ impl Config {
         Self {
             docs_dir_target: self.docs_dir_target.or(fallback.docs_dir_target),
             index_target: self.index_target.or(fallback.index_target),
+            hooks_target: self.hooks_target.or(fallback.hooks_target),
             workflow_docs: self.workflow_docs.or(fallback.workflow_docs),
             repo_slug: self.repo_slug.or(fallback.repo_slug),
             ref_sha: self.ref_sha.or(fallback.ref_sha),
@@ -115,7 +117,7 @@ impl Config {
 
     /// Settle every remaining gap and become a runnable set of options.
     ///
-    /// The two documentation targets have no default: `None` there is a
+    /// The documentation targets have no default: `None` there is a
     /// decision — write nothing — rather than an unanswered question.
     ///
     /// Fails on the one combination that cannot mean anything. Moving workflow
@@ -135,6 +137,7 @@ impl Config {
             root,
             docs_dir: self.docs_dir_target,
             index: self.index_target,
+            hooks: self.hooks_target,
             workflow_docs,
             check,
             repo_slug: self.repo_slug.unwrap_or_else(|| REPO_SLUG.to_owned()),
@@ -227,6 +230,7 @@ mod tests {
 
         assert!(options.docs_dir.is_none());
         assert!(options.index.is_none());
+        assert!(options.hooks.is_none());
     }
 
     #[test]

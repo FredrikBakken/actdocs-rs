@@ -21,6 +21,7 @@ replaces the search entirely, and a file named that way must exist.
 # .actdocs.toml
 docs-dir-target = "docs"
 index-target = "README.md"
+hooks-target = "README.md"
 workflow-docs = "docs-dir"
 repo-slug = "acme/tools"
 pin = "sha"

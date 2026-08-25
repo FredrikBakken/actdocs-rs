@@ -83,6 +83,13 @@ struct SyncArgs {
     #[arg(long, value_name = "FILE")]
     index_target: Option<PathBuf>,
 
+    /// Rebuild the hooks table between the hooks markers of this file.
+    ///
+    /// The table lists every hook the `.pre-commit-hooks.yaml` at the
+    /// repository root declares. Without this flag no table is written.
+    #[arg(long, value_name = "FILE")]
+    hooks_target: Option<PathBuf>,
+
     /// Repository slug stamped into usage snippets [default: <owner>/<repo>].
     ///
     /// Also builds the link a mirrored document opens with, so a repository
@@ -206,6 +213,7 @@ fn sync(args: SyncArgs) -> Result<Outcome> {
     let cli = Config {
         docs_dir_target: args.docs_dir_target,
         index_target: args.index_target,
+        hooks_target: args.hooks_target,
         workflow_docs: args.workflow_docs.map(Into::into),
         repo_slug: args.repo_slug,
         ref_sha: args.ref_sha,
