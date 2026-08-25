@@ -199,7 +199,8 @@ jobs:
 
           mirrored="docs/actions/greet.md"
           [[ -f "$mirrored" ]] || fail "--docs-dir-target wrote nothing"
-          grep -q 'Generated from' "$mirrored" || fail "$mirrored does not link back"
+          grep -q 'Generated from .*(https://github.com/' "$mirrored" \
+            || fail "$mirrored does not link back to the repository"
 
           grep -q '\[`greet`\](.github/actions/greet/README.md)' README.md \
             || fail "--index-target did not list the action"

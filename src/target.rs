@@ -61,23 +61,16 @@ pub enum Placement {
     DocsDir,
 }
 
-/// A link from a generated document back to the file it was generated from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Link {
-    /// The source path, as displayed.
-    pub target: String,
-    /// The href, relative to the document.
-    pub href: String,
-}
-
 /// One document generated from a source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     /// Where the document lives, relative to the repository root.
     pub path: PathBuf,
-    /// How the document introduces itself, for one that does not sit beside
-    /// its source. A README in the action's own directory needs no such link.
-    pub link: Option<Link>,
+    /// Whether the document introduces itself with a link back to its source.
+    /// A README in the action's own directory needs no such link; a copy
+    /// published elsewhere does. Where that link points depends on the
+    /// repository it is published from, so it is settled in `sync`.
+    pub source_link: bool,
     /// Whether the document carries a usage snippet.
     pub usage: bool,
 }
@@ -122,6 +115,11 @@ impl Target {
             Kind::Workflow => Some(slashed(&self.source)),
         }
     }
+
+    /// The source path as it is written in a link.
+    pub fn source_path(&self) -> String {
+        slashed(&self.source)
+    }
 }
 
 /// Decide what a path is and what it generates.
@@ -152,8 +150,8 @@ pub fn classify(source: &Path, docs_dir: Option<&Path>, workflows: Placement) ->
             .join(format!("{title}.{DOC_EXTENSION}"));
 
         Plan {
-            link: Some(link_to(source, &path)),
             path,
+            source_link: true,
             usage: true,
         }
     });
@@ -174,7 +172,7 @@ pub fn classify(source: &Path, docs_dir: Option<&Path>, workflows: Placement) ->
     if !displaced {
         plans.push(Plan {
             path: beside.clone(),
-            link: None,
+            source_link: false,
             usage: true,
         });
     }
@@ -272,23 +270,6 @@ fn is_workflow_file(name: &str) -> bool {
         .is_some_and(|extension| WORKFLOW_EXTENSIONS.contains(&extension))
 }
 
-/// The href from a generated document back to its source.
-///
-/// Computed from the document's own depth rather than assumed. Now that the
-/// documentation root is a caller's choice, a hard-coded `../../` would produce
-/// links pointing outside the repository the first time someone passed
-/// something other than a two-deep directory.
-fn link_to(source: &Path, document: &Path) -> Link {
-    let depth = document.components().count().saturating_sub(1);
-    let mut href = "../".repeat(depth);
-    href.push_str(&slashed(source));
-
-    Link {
-        target: slashed(source),
-        href,
-    }
-}
-
 /// A path as it appears in Markdown, which uses forward slashes everywhere.
 fn slashed(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
@@ -332,7 +313,7 @@ mod tests {
             action(None).plans,
             [Plan {
                 path: PathBuf::from(".github/actions/pre-commit/README.md"),
-                link: None,
+                source_link: false,
                 usage: true,
             }]
         );
@@ -340,7 +321,7 @@ mod tests {
             workflow(None).plans,
             [Plan {
                 path: PathBuf::from(".github/workflows/lint.md"),
-                link: None,
+                source_link: false,
                 usage: true,
             }]
         );
@@ -358,10 +339,7 @@ mod tests {
             action(Some("docs")).plans[1],
             Plan {
                 path: PathBuf::from("docs/actions/pre-commit.md"),
-                link: Some(Link {
-                    target: ".github/actions/pre-commit/action.yml".to_owned(),
-                    href: "../../.github/actions/pre-commit/action.yml".to_owned(),
-                }),
+                source_link: true,
                 usage: true,
             }
         );
@@ -372,16 +350,12 @@ mod tests {
     }
 
     #[test]
-    fn the_link_follows_the_depth_of_the_documentation_root() {
+    fn the_mirror_follows_the_depth_of_the_documentation_root() {
         let deep = action(Some("site/reference"));
 
         assert_eq!(
             deep.plans[1].path,
             PathBuf::from("site/reference/actions/pre-commit.md")
-        );
-        assert_eq!(
-            deep.plans[1].link.as_ref().unwrap().href,
-            "../../../.github/actions/pre-commit/action.yml"
         );
     }
 
@@ -448,10 +422,7 @@ mod tests {
             displaced(Some("docs")).plans,
             [Plan {
                 path: PathBuf::from("docs/workflows/lint.md"),
-                link: Some(Link {
-                    target: ".github/workflows/lint.yml".to_owned(),
-                    href: "../../.github/workflows/lint.yml".to_owned(),
-                }),
+                source_link: true,
                 usage: true,
             }]
         );
@@ -490,7 +461,7 @@ mod tests {
             displaced(None).plans,
             [Plan {
                 path: PathBuf::from(".github/workflows/lint.md"),
-                link: None,
+                source_link: false,
                 usage: true,
             }]
         );

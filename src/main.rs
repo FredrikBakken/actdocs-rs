@@ -84,6 +84,10 @@ struct SyncArgs {
     index_target: Option<PathBuf>,
 
     /// Repository slug stamped into usage snippets [default: <owner>/<repo>].
+    ///
+    /// Also builds the link a mirrored document opens with, so a repository
+    /// that publishes its documentation wants this stated: the placeholder
+    /// produces a link that resolves nowhere.
     #[arg(long, env = "ACTDOCS_REPO_SLUG")]
     repo_slug: Option<String>,
 

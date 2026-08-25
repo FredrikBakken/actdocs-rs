@@ -20,7 +20,7 @@ is the index, which by nature lists the whole repository.
 | `--check` | Report whether anything would change, and write nothing |
 | `--root DIR` | Repository root that generated paths resolve against |
 | `--config FILE` | Read settings from this file instead of searching for one |
-| `--repo-slug` | `owner/repo` stamped into usage snippets (`ACTDOCS_REPO_SLUG`) |
+| `--repo-slug` | `owner/repo` stamped into usage snippets and into the link a mirrored document opens with (`ACTDOCS_REPO_SLUG`) |
 | `--ref-sha` | Commit SHA stamped into usage snippets (`ACTDOCS_REF_SHA`) |
 | `--ref-version` | Version stamped into usage snippets (`ACTDOCS_REF_VERSION`) |
 | `--pin sha\|version` | How usage snippets pin the reference |

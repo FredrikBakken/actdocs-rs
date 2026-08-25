@@ -1,12 +1,21 @@
 [tools]
-prek = "0.4.12"
+prek = "0.4.14"
 rust = { version = "1.97.1", components = ["rustfmt", "clippy"] }
-uv = "0.12.2"
+uv = "0.12.5"
 
 [env]
 ZENSICAL_VERSION = "0.0.54"
 
-[tasks.check]
+[tasks."update"]
+description = "Update dependencies and regenerate lockfiles"
+run = [
+    "mise upgrade --local --bump",
+    "mise lock",
+    "prek auto-update --refresh",
+    "prek run --all-files",
+]
+
+[tasks."check"]
 description = "Everything CI runs, locally"
 run = [
     "cargo fmt --all --check",
