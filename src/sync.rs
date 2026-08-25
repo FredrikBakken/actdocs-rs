@@ -20,6 +20,17 @@ use crate::target::{self, Kind, Placement, Plan, Target};
 /// no outputs says nothing about outputs rather than showing an empty table.
 const OMIT_EMPTY_SECTIONS: bool = true;
 
+/// Where a source link points. Hard-coded, as `uses:` references are: nothing
+/// here is portable to another host by changing a base URL alone.
+const REPOSITORY_HOST: &str = "https://github.com";
+
+/// The revision a source link names.
+///
+/// `HEAD` rather than `ref_sha`, which pins the usage snippet: the link answers
+/// what a document was generated from, which stays true of the default branch,
+/// and it resolves in a local run where no SHA was ever supplied.
+const SOURCE_REF: &str = "HEAD";
+
 /// Everything a run needs beyond the list of targets.
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -149,11 +160,7 @@ fn write(
     // regeneration, so a document is scaffolded exactly once.
     let existing = match read_optional(&path)? {
         Some(text) => text,
-        None => doc::scaffold(
-            &target.title,
-            plan.link.as_ref().map(source_link),
-            plan.usage,
-        ),
+        None => scaffold(target, plan, options),
     };
 
     let tables = table::document(parsed, OMIT_EMPTY_SECTIONS);
@@ -291,11 +298,27 @@ fn read_optional(path: &Path) -> Result<Option<String>> {
     }
 }
 
-fn source_link(link: &target::Link) -> doc::SourceLink<'_> {
-    doc::SourceLink {
-        target: &link.target,
-        href: &link.href,
-    }
+/// The initial contents of a document that does not exist yet.
+fn scaffold(target: &Target, plan: &Plan, options: &Options) -> String {
+    let source = target.source_path();
+    let href = source_url(&options.repo_slug, &source);
+    let link = plan.source_link.then(|| doc::SourceLink {
+        target: &source,
+        href: &href,
+    });
+
+    doc::scaffold(&target.title, link, plan.usage)
+}
+
+/// Where a generated document links back to its source.
+///
+/// An absolute URL rather than a path relative to the document. Only a copy
+/// published away from its source carries this link at all, and a site does not
+/// contain the `.github` tree, so a relative path resolves against the site's
+/// own base URL and points at nothing. The repository is the one address the
+/// manifest is readable from wherever the document is read.
+fn source_url(repo_slug: &str, source: &str) -> String {
+    format!("{REPOSITORY_HOST}/{repo_slug}/blob/{SOURCE_REF}/{source}")
 }
 
 fn is_consistent(parsed: &Document, kind: Kind) -> bool {
@@ -427,9 +450,9 @@ runs:
 
         let mirrored = read_doc(root.path(), "docs/actions/pre-commit.md");
         assert!(
-                mirrored.contains("Generated from [`.github/actions/pre-commit/action.yml`](../../.github/actions/pre-commit/action.yml)."),
-                "got {mirrored}"
-            );
+            mirrored.contains("Generated from [`.github/actions/pre-commit/action.yml`]("),
+            "got {mirrored}"
+        );
     }
 
     #[test]
@@ -687,5 +710,32 @@ runs:
         reusable(root.path());
 
         assert!(sync_release(root.path()).is_empty());
+    }
+
+    /// A path relative to the document would resolve against the published
+    /// site's base URL, where the `.github` tree does not exist.
+    #[test]
+    fn a_source_link_points_at_the_repository_rather_than_the_site() {
+        let root = repository();
+        let mut log = Vec::new();
+        run(
+            &[PathBuf::from(MANIFEST)],
+            &Options {
+                docs_dir: Some(PathBuf::from("docs")),
+                repo_slug: "acme/tools".to_owned(),
+                ..options(root.path())
+            },
+            &mut log,
+        )
+        .unwrap();
+
+        let mirrored = read_doc(root.path(), "docs/actions/pre-commit.md");
+        assert!(
+            mirrored.contains(
+                "](https://github.com/acme/tools/blob/HEAD/.github/actions/pre-commit/action.yml)."
+            ),
+            "got {mirrored}"
+        );
+        assert!(!mirrored.contains("](../"), "got {mirrored}");
     }
 }

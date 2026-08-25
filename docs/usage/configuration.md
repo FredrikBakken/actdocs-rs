@@ -41,3 +41,7 @@ document would be a bad way to find that out.
 `--repo-slug`, `--ref-sha` and `--ref-version` default to the obvious
 placeholders `<owner>/<repo>`, `<sha>` and `<version>`. Reaching into the local
 clone for them would make output differ between a fork, a working copy and CI.
+
+`repo-slug` is also what makes the source link on a mirrored document resolve,
+so a repository publishing its documentation should state it rather than leave
+the placeholder.

@@ -352,14 +352,14 @@ old tables
                 "pre-commit",
                 Some(SourceLink {
                     target: ".github/actions/pre-commit/action.yml",
-                    href: "../../.github/actions/pre-commit/action.yml",
+                    href: "https://github.com/acme/tools/blob/HEAD/.github/actions/pre-commit/action.yml",
                 }),
                 true,
             ),
             "\
 # pre-commit
 
-Generated from [`.github/actions/pre-commit/action.yml`](../../.github/actions/pre-commit/action.yml).
+Generated from [`.github/actions/pre-commit/action.yml`](https://github.com/acme/tools/blob/HEAD/.github/actions/pre-commit/action.yml).
 
 ## Usage
 
