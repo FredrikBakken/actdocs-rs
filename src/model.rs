@@ -1,4 +1,4 @@
-//! The parsed shape of an action or a reusable workflow.
+//! The parsed shape of an action, a reusable workflow, or a hooks manifest.
 //!
 //! These types are the boundary between parsing and rendering: everything the
 //! renderers need is here, and nothing about YAML survives past this point.
@@ -95,6 +95,23 @@ pub const ALL_SCOPES: &str = "-";
 pub struct Permission {
     pub scope: String,
     pub access: String,
+}
+
+/// One hook declared by a `.pre-commit-hooks.yaml`.
+///
+/// Deliberately not sorted, unlike every section above. Those are YAML
+/// mappings, whose order is an accident of authoring; a hooks file is a
+/// sequence, so the order it was written in is a choice, and the order a
+/// reader is meant to see.
+///
+/// `id` is a `String` rather than a [`Scalar`] because it is the one field a
+/// consumer has to write verbatim in its own configuration. A hook without one
+/// is not a hook anybody can name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Hook {
+    pub id: String,
+    pub name: Scalar,
+    pub description: Scalar,
 }
 
 /// How an entry participates in section ordering.

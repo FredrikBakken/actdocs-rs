@@ -17,6 +17,7 @@ is the index, which by nature lists the whole repository.
 | `--docs-dir-target DIR` | Also mirror each document to `DIR/actions/<name>.md` or `DIR/workflows/<name>.md` |
 | `--workflow-docs beside\|docs-dir` | Where a workflow's document goes; `beside` (default) writes it next to the workflow, `docs-dir` writes it only under `--docs-dir-target` |
 | `--index-target FILE` | Rebuild the repository index in `FILE`, listing every action and workflow rather than only the targets given |
+| `--hooks-target FILE` | Rebuild the hooks table in `FILE` from the `.pre-commit-hooks.yaml` at the repository root |
 | `--check` | Report whether anything would change, and write nothing |
 | `--root DIR` | Repository root that generated paths resolve against |
 | `--config FILE` | Read settings from this file instead of searching for one |

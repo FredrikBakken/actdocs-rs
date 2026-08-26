@@ -13,12 +13,17 @@ use anyhow::{Context, Result};
 
 use crate::doc::{self, Update};
 use crate::parse::{self, Document};
-use crate::render::{index, table, usage};
+use crate::render::{hooks, index, table, usage};
 use crate::target::{self, Kind, Placement, Plan, Target};
 
 /// Generated documents leave out sections with no entries, so an action with
 /// no outputs says nothing about outputs rather than showing an empty table.
 const OMIT_EMPTY_SECTIONS: bool = true;
+
+/// The one name a hook runner reads a manifest from. Matched exactly, as a
+/// workflow's extension is: pre-commit does not accept `.pre-commit-hooks.yml`
+/// either.
+const HOOKS_MANIFEST: &str = ".pre-commit-hooks.yaml";
 
 /// Where a source link points. Hard-coded, as `uses:` references are: nothing
 /// here is portable to another host by changing a base URL alone.
@@ -44,6 +49,9 @@ pub struct Options {
     pub index: Option<PathBuf>,
     /// Where a workflow's document is written. Actions are unaffected: each
     /// already has a directory of its own to keep a README in.
+    /// Rebuild the hooks table in this document, resolved against `root`.
+    /// `None` means no table is written.
+    pub hooks: Option<PathBuf>,
     pub workflow_docs: Placement,
     /// Report what would change, and write nothing.
     pub check: bool,
@@ -86,7 +94,9 @@ pub fn run(targets: &[PathBuf], options: &Options, log: &mut dyn io::Write) -> R
     for source in targets {
         document(source, options, log, &mut report)?;
     }
+
     update_index(options, log, &mut report)?;
+    update_hooks(options, log, &mut report)?;
 
     Ok(report)
 }
@@ -229,6 +239,42 @@ fn update_index(options: &Options, log: &mut dyn io::Write, report: &mut Report)
     Ok(())
 }
 
+/// Rebuild the hooks table from the manifest at the repository root.
+///
+/// Opt-in for the same reason the index is: a repository that publishes no
+/// hooks should not find a table of them in its README. The manifest is not a
+/// target and never appears in the list — a hook runner hands over the files a
+/// commit touched, and this one describes the runner rather than the repository.
+fn update_hooks(options: &Options, log: &mut dyn io::Write, report: &mut Report) -> Result<()> {
+    let Some(path) = options.hooks.as_deref() else {
+        return Ok(());
+    };
+
+    // Both files were named deliberately, one by the flag and one by
+    // pre-commit, so a missing one is a mistake rather than a repository with
+    // nothing to say.
+    let manifest = options.root.join(HOOKS_MANIFEST);
+    let source = fs::read_to_string(&manifest)
+        .with_context(|| format!("cannot read {}", manifest.display()))?;
+    let declared =
+        parse::hooks(&source).with_context(|| format!("cannot parse {}", manifest.display()))?;
+
+    let full = options.root.join(path);
+    let existing =
+        fs::read_to_string(&full).with_context(|| format!("cannot read {}", full.display()))?;
+
+    let body = hooks::hooks(&declared);
+    let Some(updated) = replace(&existing, doc::HOOKS, &body, path, log, report)? else {
+        return Ok(());
+    };
+
+    if doc::write_if_changed(&full, &updated, options.check)? == Update::WouldChange {
+        report.would_change = true;
+    }
+
+    Ok(())
+}
+
 /// One index row per source that has something to document.
 fn entries(sources: &[PathBuf], options: &Options) -> Result<Vec<index::Entry>> {
     let mut entries = Vec::new();
@@ -345,6 +391,14 @@ runs:
   using: composite
 ";
 
+    const HOOKS_YAML: &str = "\
+- id: actdocs
+  name: \"Generate documentation\"
+  description: >-
+    Rewrites the generated regions
+    of each document.
+";
+
     const MANIFEST: &str = ".github/actions/pre-commit/action.yml";
 
     /// The document the index tests opt in to.
@@ -355,6 +409,7 @@ runs:
             root: root.to_path_buf(),
             docs_dir: None,
             index: None,
+            hooks: None,
             workflow_docs: Placement::default(),
             check: false,
             repo_slug: "<owner>/<repo>".to_owned(),
@@ -368,6 +423,14 @@ runs:
     fn indexed(root: &Path) -> Options {
         Options {
             index: Some(PathBuf::from(INDEX_DOC)),
+            ..options(root)
+        }
+    }
+
+    /// A run that opts in to the hooks table.
+    fn hooked(root: &Path) -> Options {
+        Options {
+            hooks: Some(PathBuf::from(INDEX_DOC)),
             ..options(root)
         }
     }
@@ -737,5 +800,50 @@ runs:
             "got {mirrored}"
         );
         assert!(!mirrored.contains("](../"), "got {mirrored}");
+    }
+
+    #[test]
+    fn the_hooks_table_is_built_from_the_manifest() {
+        let root = repository();
+        fs::write(root.path().join(".pre-commit-hooks.yaml"), HOOKS_YAML).unwrap();
+        fs::write(
+            root.path().join(INDEX_DOC),
+            "# Repo\n\n<!-- hooks start -->\n<!-- hooks end -->\n",
+        )
+        .unwrap();
+
+        let mut log = Vec::new();
+        run(&[], &hooked(root.path()), &mut log).unwrap();
+
+        let readme = read_doc(root.path(), INDEX_DOC);
+        assert!(
+                readme.contains(
+                    "| `actdocs` | Generate documentation | Rewrites the generated regions of each document. |"
+                ),
+                "got {readme}"
+            );
+    }
+
+    #[test]
+    fn a_missing_manifest_is_an_error_rather_than_an_empty_table() {
+        let root = repository();
+        let mut log = Vec::new();
+
+        let error = run(&[], &hooked(root.path()), &mut log)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains(".pre-commit-hooks.yaml"), "got {error}");
+    }
+
+    #[test]
+    fn no_hooks_table_is_written_without_a_target() {
+        let root = repository();
+        fs::write(root.path().join(".pre-commit-hooks.yaml"), HOOKS_YAML).unwrap();
+        let before = read_doc(root.path(), INDEX_DOC);
+
+        sync(root.path(), false);
+
+        assert_eq!(read_doc(root.path(), INDEX_DOC), before);
     }
 }

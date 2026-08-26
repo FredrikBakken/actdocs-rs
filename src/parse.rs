@@ -1,4 +1,4 @@
-//! Turning YAML into a [`Document`].
+//! Turning YAML into a [`Document`], or a manifest into the hooks it declares.
 //!
 //! Nothing here knows about Markdown, and nothing downstream knows about YAML.
 
@@ -6,7 +6,8 @@ use anyhow::{Result, anyhow};
 use saphyr::{LoadableYamlNode, Yaml};
 
 use crate::model::{
-    ALL_SCOPES, ActionInput, ActionSpec, Output, Permission, Secret, WorkflowInput, WorkflowSpec,
+    ALL_SCOPES, ActionInput, ActionSpec, Hook, Output, Permission, Secret, WorkflowInput,
+    WorkflowSpec,
 };
 use crate::scalar::Scalar;
 
@@ -55,6 +56,39 @@ pub fn parse(source: &str) -> Result<Document> {
             "not an action or a reusable workflow: no top-level `runs:` and no `on.workflow_call:`"
         )
     })
+}
+
+/// Parse a `.pre-commit-hooks.yaml`.
+///
+/// The one source here that is a sequence rather than a mapping, which is why
+/// nothing below is reused: [`entries`] reads named children, and these have no
+/// names until you look inside them.
+///
+/// Unlike [`try_parse`], a document that is not a manifest is an error rather
+/// than a shrug. Nothing hands this file over speculatively — it is read only
+/// because a hooks table was asked for by name.
+pub fn hooks(source: &str) -> Result<Vec<Hook>> {
+    let documents =
+        Yaml::load_from_str(source).map_err(|error| anyhow!("invalid YAML: {error}"))?;
+    let Some(root) = documents.first() else {
+        return Ok(Vec::new());
+    };
+    let Some(sequence) = root.as_sequence() else {
+        return Err(anyhow!(
+            "not a hooks manifest: the document is not a sequence of hooks"
+        ));
+    };
+
+    Ok(sequence
+        .iter()
+        .filter_map(|entry| {
+            Some(Hook {
+                id: lookup(entry, "id")?.as_str()?.to_owned(),
+                name: scalar(lookup(entry, "name")),
+                description: scalar(lookup(entry, "description")),
+            })
+        })
+        .collect())
 }
 
 fn action(root: &Yaml<'_>) -> ActionSpec {
@@ -417,5 +451,49 @@ mod tests {
     #[test]
     fn unreadable_yaml_is_still_an_error() {
         assert!(try_parse("runs:\n  - [unterminated\n").is_err());
+    }
+
+    #[test]
+    fn hooks_are_read_in_the_order_they_are_declared() {
+        let manifest = hooks("- id: b\n  name: B\n- id: a\n  name: A\n").unwrap();
+
+        assert_eq!(
+            manifest
+                .iter()
+                .map(|hook| hook.id.as_str())
+                .collect::<Vec<_>>(),
+            ["b", "a"]
+        );
+    }
+
+    #[test]
+    fn a_folded_description_arrives_as_one_value() {
+        let manifest = hooks("- id: x\n  description: >-\n    one\n    two\n").unwrap();
+
+        assert_eq!(manifest[0].description, Scalar::new("one two"));
+    }
+
+    #[test]
+    fn a_hook_without_an_id_is_skipped() {
+        assert_eq!(hooks("- name: Nameless\n- id: x\n").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_optional_fields_stay_absent() {
+        let manifest = hooks("- id: x\n").unwrap();
+
+        assert_eq!(manifest[0].name, Scalar::null());
+        assert_eq!(manifest[0].description, Scalar::null());
+    }
+
+    #[test]
+    fn an_empty_manifest_declares_no_hooks() {
+        assert!(hooks("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_manifest_that_is_not_a_sequence_is_rejected() {
+        let error = hooks("id: x\n").unwrap_err().to_string();
+        assert!(error.contains("not a hooks manifest"), "got {error}");
     }
 }

@@ -39,6 +39,12 @@ pub const INDEX: Markers = Markers {
     end: "<!-- index end -->",
 };
 
+/// The hooks a repository publishes.
+pub const HOOKS: Markers = Markers {
+    start: "<!-- hooks start -->",
+    end: "<!-- hooks end -->",
+};
+
 /// A document that cannot be updated, because its markers are missing or broken.
 ///
 /// This is deliberately not lumped in with IO and parse failures: it means a
