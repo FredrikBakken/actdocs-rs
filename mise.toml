@@ -11,7 +11,7 @@ description = "Update dependencies and regenerate lockfiles"
 run = [
     "mise upgrade --local --bump",
     "mise lock",
-    "prek auto-update --refresh",
+    "prek update --refresh",
     "prek run --all-files",
 ]
 
