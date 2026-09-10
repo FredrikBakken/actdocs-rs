@@ -133,7 +133,7 @@ fn workflow(root: &Yaml<'_>) -> WorkflowSpec {
             })
             .collect(),
         outputs: outputs(call.and_then(|call| lookup(call, "outputs"))),
-        permissions: permissions(lookup(root, "permissions")),
+        permissions: permissions(root),
     };
     spec.sort();
     spec
@@ -153,16 +153,74 @@ fn outputs(node: Option<&Yaml<'_>>) -> Vec<Output> {
         .collect()
 }
 
-/// Read the top-level `permissions`.
+/// Every scope a caller has to grant, across the whole file.
 ///
-/// Job-level permissions are deliberately ignored: they govern one job rather
-/// than the contract a caller has to satisfy, so they are not part of the
-/// workflow's public interface.
-fn permissions(node: Option<&Yaml<'_>>) -> Vec<Permission> {
-    let Some(node) = node else {
-        return Vec::new();
+/// A job's `permissions` replaces the top-level block for that job rather than
+/// adding to it, and a caller's own block is the ceiling every called job runs
+/// under. Neither one alone is therefore the contract: the caller has to grant
+/// the union, at the strongest access any job asks for.
+///
+/// Reading only the top-level block was a quieter kind of wrong than reading
+/// none. It documented `contents: read` for a workflow whose publish job
+/// cannot run without `contents: write`, and a caller who granted exactly what
+/// was documented found out at release time.
+fn permissions(root: &Yaml<'_>) -> Vec<Permission> {
+    let jobs = lookup(root, "jobs")
+        .and_then(Yaml::as_mapping)
+        .into_iter()
+        .flat_map(|jobs| jobs.iter().map(|(_, job)| job))
+        .filter_map(|job| lookup(job, "permissions"));
+
+    let mut merged: Vec<Permission> = Vec::new();
+    for node in lookup(root, "permissions").into_iter().chain(jobs) {
+        for permission in block(node) {
+            grant(&mut merged, permission);
+        }
+    }
+
+    // A blanket grant already covers every named scope, so listing both would
+    // be noise at best and a contradiction at worst. It is kept alone.
+    if let Some(blanket) = merged
+        .iter()
+        .filter(|permission| permission.scope == ALL_SCOPES)
+        .max_by_key(|permission| rank(&permission.access))
+    {
+        return vec![blanket.clone()];
+    }
+
+    merged
+}
+
+/// Record one grant, keeping the strongest access already held for its scope.
+fn grant(merged: &mut Vec<Permission>, permission: Permission) {
+    let Some(held) = merged
+        .iter_mut()
+        .find(|held| held.scope == permission.scope)
+    else {
+        merged.push(permission);
+        return;
     };
 
+    if rank(&permission.access) > rank(&held.access) {
+        held.access = permission.access;
+    }
+}
+
+/// How much a grant allows, for choosing between two of them.
+///
+/// `none` is ranked rather than discarded: a job that states it is saying
+/// something, and what it should do is lose to every other grant for the same
+/// scope, which is what ranking it lowest achieves.
+fn rank(access: &str) -> u8 {
+    match access {
+        "write" | WRITE_ALL => 2,
+        "read" | READ_ALL => 1,
+        _ => 0,
+    }
+}
+
+/// The grants one `permissions` block makes, in whichever form it was written.
+fn block(node: &Yaml<'_>) -> Vec<Permission> {
     if let Some(access) = node.as_str() {
         return if access == READ_ALL || access == WRITE_ALL {
             vec![Permission {
@@ -436,10 +494,73 @@ mod tests {
     }
 
     #[test]
-    fn job_level_permissions_are_not_part_of_the_interface() {
+    fn a_job_scope_is_part_of_the_interface_too() {
         let spec = workflow_of(
             "on:\n  workflow_call:\njobs:\n  run:\n    permissions:\n      contents: write\n",
         );
+        assert_eq!(
+            spec.permissions,
+            vec![Permission {
+                scope: "contents".to_owned(),
+                access: "write".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_job_that_needs_more_than_the_top_level_says_so() {
+        let spec = workflow_of(
+            "on:\n  workflow_call:\npermissions:\n  contents: read\njobs:\n  plan:\n    permissions:\n      contents: read\n  publish:\n    permissions:\n      contents: write\n",
+        );
+        assert_eq!(
+            spec.permissions,
+            vec![Permission {
+                scope: "contents".to_owned(),
+                access: "write".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_weaker_job_grant_does_not_lower_a_stronger_one() {
+        let spec = workflow_of(
+            "on:\n  workflow_call:\npermissions:\n  contents: write\njobs:\n  run:\n    permissions:\n      contents: none\n",
+        );
+        assert_eq!(spec.permissions[0].access, "write");
+    }
+
+    #[test]
+    fn scopes_only_a_job_names_are_listed_beside_the_rest() {
+        let spec = workflow_of(
+            "on:\n  workflow_call:\npermissions:\n  contents: read\njobs:\n  run:\n    permissions:\n      id-token: write\n      packages: write\n",
+        );
+        assert_eq!(
+            spec.permissions
+                .iter()
+                .map(|permission| permission.scope.as_str())
+                .collect::<Vec<_>>(),
+            ["contents", "id-token", "packages"]
+        );
+    }
+
+    #[test]
+    fn a_blanket_grant_swallows_the_scopes_it_already_covers() {
+        let spec = workflow_of(
+            "on:\n  workflow_call:\npermissions: write-all\njobs:\n  run:\n    permissions:\n      contents: read\n",
+        );
+        assert_eq!(
+            spec.permissions,
+            vec![Permission {
+                scope: "-".to_owned(),
+                access: "write-all".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_workflow_granting_nothing_anywhere_has_no_permissions() {
+        let spec =
+            workflow_of("on:\n  workflow_call:\njobs:\n  run:\n    runs-on: ubuntu-latest\n");
         assert!(spec.permissions.is_empty());
     }
 

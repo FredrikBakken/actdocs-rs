@@ -1,10 +1,10 @@
 [tools]
-prek = "0.4.14"
-rust = { version = "1.97.1", components = ["rustfmt", "clippy"] }
-uv = "0.12.5"
+prek = "0.5.2"
+rust = { version = "1.98.0", components = ["rustfmt", "clippy"] }
+uv = "0.12.9"
 
 [env]
-ZENSICAL_VERSION = "0.0.54"
+ZENSICAL_VERSION = "0.0.60"
 
 [tasks."update"]
 description = "Update dependencies and regenerate lockfiles"

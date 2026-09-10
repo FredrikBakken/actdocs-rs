@@ -19,6 +19,14 @@ hooks = [
 ]
 
 [[repos]]
+repo = "https://github.com/rvben/rumdl-pre-commit"
+rev = "v0.2.70"
+hooks = [
+    { id = "rumdl", args = ["--disable", "MD013"] },
+    { id = "rumdl-fmt", args = ["--disable", "MD013"] },
+]
+
+[[repos]]
 repo = "local"
 hooks = [
     # Both run over the whole crate rather than the changed files: rustfmt
@@ -41,12 +49,4 @@ hooks = [
         files = "\\.(rs|toml)$",
         pass_filenames = false,
     },
-]
-
-[[repos]]
-repo = "https://github.com/rvben/rumdl-pre-commit"
-rev = "v0.2.60"
-hooks = [
-    { id = "rumdl", args = ["--disable", "MD013"] },
-    { id = "rumdl-fmt", args = ["--disable", "MD013"] },
 ]
