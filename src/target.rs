@@ -5,12 +5,14 @@
 //! filename suggests is an authoring mistake rather than a routing instruction.
 //! Parsing only decides whether there is anything to document at all.
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use serde::Deserialize;
 
 /// Where GitHub requires sources to live. Used for discovery only, and not
 /// configurable, because GitHub does not make it configurable either.
@@ -24,6 +26,11 @@ const WORKFLOWS_SUBDIR: &str = "workflows";
 
 const DOC_EXTENSION: &str = "md";
 const README: &str = "README.md";
+
+/// The other name a directory can introduce itself with. Offered alongside
+/// `README.md` because static site generators look for this one, while GitHub
+/// renders the former when someone browses the tree.
+const INDEX: &str = "index.md";
 
 /// The file names GitHub accepts for an action manifest.
 const MANIFESTS: [&str; 2] = ["action.yml", "action.yaml"];
@@ -61,6 +68,148 @@ pub enum Placement {
     DocsDir,
 }
 
+/// The shape of a mirrored document under the documentation root.
+///
+/// Only the mirror is affected. The document beside the source keeps GitHub's
+/// layout, which is not ours to rearrange: an action's README belongs in the
+/// directory GitHub already gave it.
+///
+/// Spelled as one word rather than a table, so that the entry file cannot be
+/// named where there is no directory to put it in: `flat` has no file name to
+/// choose — the document *is* `<name>.md`. A setting that accepted one anyway
+/// would have to either ignore it or quietly reinterpret the layout, and this
+/// tool reports rather than guesses everywhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Layout {
+    /// `docs/actions/<name>.md`. One file, and nowhere to put anything beside
+    /// it.
+    #[default]
+    Flat,
+    /// `docs/actions/<name>/README.md`, so that screenshots, diagrams and
+    /// sub-pages have somewhere to live next to the document they belong to.
+    /// `README.md` is the name GitHub renders when someone browses the tree.
+    Directory,
+    /// `docs/actions/<name>/index.md`: the same shape, named the way a static
+    /// site generator looks for it rather than the way GitHub does.
+    DirectoryIndex,
+}
+
+impl Layout {
+    /// Where a mirror of `title` lands under `root`.
+    fn mirror(self, root: &Path, subdirectory: &str, title: &str) -> PathBuf {
+        let directory = root.join(subdirectory);
+        match self {
+            Self::Flat => directory.join(format!("{title}.{DOC_EXTENSION}")),
+            Self::Directory => directory.join(title).join(README),
+            Self::DirectoryIndex => directory.join(title).join(INDEX),
+        }
+    }
+
+    /// Every shape a mirror could take, so that the ones not chosen can be
+    /// reported. Listed here rather than at the call site because a variant
+    /// added later must not silently go unmentioned.
+    const ALL: [Self; 3] = [Self::Flat, Self::Directory, Self::DirectoryIndex];
+}
+
+/// Which layout applies to a given source, once the per-kind and per-target
+/// overrides have had their say.
+///
+/// Resolution runs from the most specific statement to the least: a rule naming
+/// one action beats a rule about actions, which beats the setting for the
+/// repository. The ordering is the same one the configuration layers use, for
+/// the same reason — the more narrowly a value was stated, the more deliberate
+/// it was.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Layouts {
+    /// The repository-wide default, where nothing more specific applies.
+    pub default: Layout,
+    /// Every action, unless one of them is named below.
+    pub actions: Option<Layout>,
+    /// Every workflow, unless one of them is named below.
+    pub workflows: Option<Layout>,
+    /// One named action, by directory name.
+    pub action: BTreeMap<String, Layout>,
+    /// One named workflow, by file stem.
+    pub workflow: BTreeMap<String, Layout>,
+}
+
+/// Accepts the one-word form as well as the table, so a repository that wants a
+/// single shape writes `docs-dir-layout = "directory"` and never learns the
+/// rest of this exists.
+impl<'de> Deserialize<'de> for Layouts {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "kebab-case", deny_unknown_fields)]
+        struct Table {
+            default: Option<Layout>,
+            actions: Option<Layout>,
+            workflows: Option<Layout>,
+            #[serde(default)]
+            action: BTreeMap<String, Layout>,
+            #[serde(default)]
+            workflow: BTreeMap<String, Layout>,
+        }
+
+        // Tried before the one-word form only because a table is the more
+        // specific shape. The two cannot be confused: a string never matches
+        // the table, and the table never matches a string.
+        //
+        // Named for the setting rather than for the mechanism, because serde
+        // puts this name in the error a misspelling produces.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum DocsDirLayout {
+            Table(Table),
+            Uniform(Layout),
+        }
+
+        Ok(match DocsDirLayout::deserialize(deserializer)? {
+            DocsDirLayout::Uniform(layout) => Self::uniform(layout),
+            DocsDirLayout::Table(table) => Self {
+                default: table.default.unwrap_or_default(),
+                actions: table.actions,
+                workflows: table.workflows,
+                action: table.action,
+                workflow: table.workflow,
+            },
+        })
+    }
+}
+
+impl Layouts {
+    /// Every layout as a single word, for a repository that wants one shape.
+    #[must_use]
+    pub fn uniform(layout: Layout) -> Self {
+        Self {
+            default: layout,
+            ..Self::default()
+        }
+    }
+
+    /// The layout for one source, most specific rule first.
+    #[must_use]
+    pub fn resolve(&self, kind: Kind, title: &str) -> Layout {
+        let (named, all) = match kind {
+            Kind::Action => (&self.action, self.actions),
+            Kind::Workflow => (&self.workflow, self.workflows),
+        };
+
+        named.get(title).copied().or(all).unwrap_or(self.default)
+    }
+
+    /// Whether any rule could put a document somewhere the default would not.
+    /// Used to decide whether looking for stranded documents is worth the
+    /// filesystem calls.
+    #[must_use]
+    pub fn is_uniform(&self) -> bool {
+        self.actions.is_none()
+            && self.workflows.is_none()
+            && self.action.is_empty()
+            && self.workflow.is_empty()
+    }
+}
+
 /// One document generated from a source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
@@ -75,6 +224,33 @@ pub struct Plan {
     pub usage: bool,
 }
 
+/// Why a document is no longer written, so that the diagnostic can say which
+/// setting stranded it rather than guessing at one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reason {
+    /// Workflow documents were configured for the documentation root.
+    Placement,
+    /// The mirror's layout changed, so the previous shape is stale.
+    Layout,
+}
+
+impl Reason {
+    pub fn explanation(self) -> &'static str {
+        match self {
+            Self::Placement => "workflow documents are configured for docs-dir",
+            Self::Layout => "the documentation layout changed",
+        }
+    }
+}
+
+/// A document a differently configured run would have written, and this one
+/// will not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Orphan {
+    pub path: PathBuf,
+    pub reason: Reason,
+}
+
 /// A source file and everything generated from it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
@@ -85,11 +261,11 @@ pub struct Target {
     pub source: PathBuf,
     /// Every document to write. The first is the canonical one.
     pub plans: Vec<Plan>,
-    /// A document that a different placement would have written, and this one
-    /// will not. Reported rather than removed: everything outside the markers
-    /// is hand-written, and a generator that deletes prose it did not produce
-    /// is one nobody trusts twice.
-    pub orphan: Option<PathBuf>,
+    /// Documents a different setting would have written, and this one will not.
+    /// Reported rather than removed: everything outside the markers is
+    /// hand-written, and a generator that deletes prose it did not produce is
+    /// one nobody trusts twice.
+    pub orphans: Vec<Orphan>,
 }
 
 impl Target {
@@ -130,7 +306,12 @@ impl Target {
 ///
 /// Returns `None` only for a path with no usable file name, which a hook runner
 /// will never produce.
-pub fn classify(source: &Path, docs_dir: Option<&Path>, workflows: Placement) -> Option<Target> {
+pub fn classify(
+    source: &Path,
+    docs_dir: Option<&Path>,
+    workflows: Placement,
+    layouts: &Layouts,
+) -> Option<Target> {
     let (kind, title, beside) = if is_manifest(source) {
         let directory = source.parent()?;
         let title = directory.file_name()?.to_str()?.to_owned();
@@ -140,20 +321,16 @@ pub fn classify(source: &Path, docs_dir: Option<&Path>, workflows: Placement) ->
         (Kind::Workflow, title, source.with_extension(DOC_EXTENSION))
     };
 
-    let mirror = docs_dir.map(|root| {
-        let subdirectory = match kind {
-            Kind::Action => ACTIONS_SUBDIR,
-            Kind::Workflow => WORKFLOWS_SUBDIR,
-        };
-        let path = root
-            .join(subdirectory)
-            .join(format!("{title}.{DOC_EXTENSION}"));
+    let layout = layouts.resolve(kind, &title);
+    let subdirectory = match kind {
+        Kind::Action => ACTIONS_SUBDIR,
+        Kind::Workflow => WORKFLOWS_SUBDIR,
+    };
 
-        Plan {
-            path,
-            source_link: true,
-            usage: true,
-        }
+    let mirror = docs_dir.map(|root| Plan {
+        path: layout.mirror(root, subdirectory, &title),
+        source_link: true,
+        usage: true,
     });
 
     // Displaces a workflow only, and only where there is somewhere for it to
@@ -178,12 +355,36 @@ pub fn classify(source: &Path, docs_dir: Option<&Path>, workflows: Placement) ->
     }
     plans.extend(mirror);
 
+    // Every shape this mirror could have taken but did not. Listing them all
+    // rather than only the previous one means a repository that has changed
+    // its mind twice still hears about both files it left behind.
+    let mut orphans = Vec::new();
+    if displaced {
+        orphans.push(Orphan {
+            path: beside,
+            reason: Reason::Placement,
+        });
+    }
+    if let Some(root) = docs_dir {
+        let written = layout.mirror(root, subdirectory, &title);
+        orphans.extend(
+            Layout::ALL
+                .into_iter()
+                .map(|other| other.mirror(root, subdirectory, &title))
+                .filter(|path| *path != written)
+                .map(|path| Orphan {
+                    path,
+                    reason: Reason::Layout,
+                }),
+        );
+    }
+
     Some(Target {
         kind,
         title,
         source: source.to_path_buf(),
         plans,
-        orphan: displaced.then_some(beside),
+        orphans,
     })
 }
 
@@ -283,16 +484,40 @@ mod tests {
     const WORKFLOW: &str = ".github/workflows/lint.yml";
 
     fn action(docs: Option<&str>) -> Target {
-        classify(Path::new(MANIFEST), docs.map(Path::new), Placement::Beside).unwrap()
+        laid_out(MANIFEST, docs, Placement::Beside, &Layouts::default())
     }
 
     fn workflow(docs: Option<&str>) -> Target {
-        classify(Path::new(WORKFLOW), docs.map(Path::new), Placement::Beside).unwrap()
+        laid_out(WORKFLOW, docs, Placement::Beside, &Layouts::default())
     }
 
     /// A workflow whose document is configured to live under the docs root.
     fn displaced(docs: Option<&str>) -> Target {
-        classify(Path::new(WORKFLOW), docs.map(Path::new), Placement::DocsDir).unwrap()
+        laid_out(WORKFLOW, docs, Placement::DocsDir, &Layouts::default())
+    }
+
+    fn laid_out(
+        source: &str,
+        docs: Option<&str>,
+        placement: Placement,
+        layouts: &Layouts,
+    ) -> Target {
+        classify(Path::new(source), docs.map(Path::new), placement, layouts).unwrap()
+    }
+
+    /// The paths a target would actually write.
+    fn paths(target: &Target) -> Vec<PathBuf> {
+        target.plans.iter().map(|plan| plan.path.clone()).collect()
+    }
+
+    /// The documents a target reports as stranded, for a given reason.
+    fn orphans(target: &Target, reason: Reason) -> Vec<PathBuf> {
+        target
+            .orphans
+            .iter()
+            .filter(|orphan| orphan.reason == reason)
+            .map(|orphan| orphan.path.clone())
+            .collect()
     }
 
     #[test]
@@ -361,30 +586,30 @@ mod tests {
 
     #[test]
     fn the_yaml_spelling_of_a_manifest_is_also_an_action() {
-        let target = classify(
-            Path::new(".github/actions/x/action.yaml"),
+        let target = laid_out(
+            ".github/actions/x/action.yaml",
             None,
             Placement::Beside,
-        )
-        .unwrap();
+            &Layouts::default(),
+        );
         assert_eq!(target.kind, Kind::Action);
         assert_eq!(target.title, "x");
     }
 
     #[test]
     fn both_kinds_carry_a_usage_snippet() {
-        let action = classify(
-            Path::new(".github/actions/greet/action.yml"),
+        let action = laid_out(
+            ".github/actions/greet/action.yml",
             None,
             Placement::Beside,
-        )
-        .unwrap();
-        let workflow = classify(
-            Path::new(".github/workflows/release.yml"),
+            &Layouts::default(),
+        );
+        let workflow = laid_out(
+            ".github/workflows/release.yml",
             None,
             Placement::Beside,
-        )
-        .unwrap();
+            &Layouts::default(),
+        );
 
         assert!(action.plans.iter().all(|plan| plan.usage));
         assert!(workflow.plans.iter().all(|plan| plan.usage));
@@ -431,26 +656,26 @@ mod tests {
     #[test]
     fn the_displaced_document_is_named_rather_than_forgotten() {
         assert_eq!(
-            displaced(Some("docs")).orphan,
-            Some(PathBuf::from(".github/workflows/lint.md"))
+            orphans(&displaced(Some("docs")), Reason::Placement),
+            [PathBuf::from(".github/workflows/lint.md")]
         );
-        assert_eq!(workflow(Some("docs")).orphan, None);
+        assert!(orphans(&workflow(Some("docs")), Reason::Placement).is_empty());
     }
 
     #[test]
     fn an_action_keeps_its_readme_whatever_workflows_do() {
-        let target = classify(
-            Path::new(MANIFEST),
-            Some(Path::new("docs")),
+        let target = laid_out(
+            MANIFEST,
+            Some("docs"),
             Placement::DocsDir,
-        )
-        .unwrap();
+            &Layouts::default(),
+        );
 
         assert_eq!(
             target.plans[0].path,
             PathBuf::from(".github/actions/pre-commit/README.md")
         );
-        assert_eq!(target.orphan, None);
+        assert!(orphans(&target, Reason::Placement).is_empty());
     }
 
     #[test]
@@ -544,18 +769,197 @@ mod tests {
         // `beside` is not `beside only`. Naming a documentation root asks for
         // the mirror either way; this flag decides only whether the document
         // beside the source survives.
-        let paths: Vec<_> = workflow(Some("docs"))
-            .plans
-            .iter()
-            .map(|plan| plan.path.clone())
-            .collect();
-
         assert_eq!(
-            paths,
+            paths(&workflow(Some("docs"))),
             [
                 PathBuf::from(".github/workflows/lint.md"),
                 PathBuf::from("docs/workflows/lint.md"),
             ]
         );
+    }
+
+    #[test]
+    fn a_directory_layout_gives_the_mirror_somewhere_to_keep_its_siblings() {
+        let readme = laid_out(
+            MANIFEST,
+            Some("docs"),
+            Placement::Beside,
+            &Layouts::uniform(Layout::Directory),
+        );
+        let index = laid_out(
+            MANIFEST,
+            Some("docs"),
+            Placement::Beside,
+            &Layouts::uniform(Layout::DirectoryIndex),
+        );
+
+        assert_eq!(
+            readme.plans[1].path,
+            PathBuf::from("docs/actions/pre-commit/README.md")
+        );
+        assert_eq!(
+            index.plans[1].path,
+            PathBuf::from("docs/actions/pre-commit/index.md")
+        );
+    }
+
+    #[test]
+    fn the_document_beside_the_source_is_never_rearranged() {
+        // GitHub's layout is not ours to change: only the mirror moves.
+        for layout in [Layout::Flat, Layout::Directory, Layout::DirectoryIndex] {
+            let layouts = Layouts::uniform(layout);
+
+            assert_eq!(
+                laid_out(MANIFEST, Some("docs"), Placement::Beside, &layouts).plans[0].path,
+                PathBuf::from(".github/actions/pre-commit/README.md")
+            );
+            assert_eq!(
+                laid_out(WORKFLOW, Some("docs"), Placement::Beside, &layouts).plans[0].path,
+                PathBuf::from(".github/workflows/lint.md")
+            );
+        }
+    }
+
+    #[test]
+    fn the_shapes_the_mirror_did_not_take_are_named() {
+        let target = laid_out(
+            MANIFEST,
+            Some("docs"),
+            Placement::Beside,
+            &Layouts::uniform(Layout::DirectoryIndex),
+        );
+
+        assert_eq!(
+            orphans(&target, Reason::Layout),
+            [
+                PathBuf::from("docs/actions/pre-commit.md"),
+                PathBuf::from("docs/actions/pre-commit/README.md"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_document_actually_written_is_never_called_stranded() {
+        for layout in [Layout::Flat, Layout::Directory, Layout::DirectoryIndex] {
+            let target = laid_out(
+                MANIFEST,
+                Some("docs"),
+                Placement::Beside,
+                &Layouts::uniform(layout),
+            );
+            let written = &target.plans[1].path;
+
+            assert!(
+                !target.orphans.iter().any(|orphan| orphan.path == *written),
+                "{written:?} was reported as stranded"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_is_stranded_where_nothing_is_mirrored() {
+        assert!(action(None).orphans.is_empty());
+    }
+
+    #[test]
+    fn a_rule_about_one_target_beats_a_rule_about_its_kind() {
+        let layouts = Layouts {
+            default: Layout::Flat,
+            actions: Some(Layout::Directory),
+            action: BTreeMap::from([("pre-commit".to_owned(), Layout::DirectoryIndex)]),
+            ..Layouts::default()
+        };
+
+        assert_eq!(
+            layouts.resolve(Kind::Action, "pre-commit"),
+            Layout::DirectoryIndex
+        );
+        assert_eq!(layouts.resolve(Kind::Action, "other"), Layout::Directory);
+        // Workflows were never mentioned, so they fall all the way through.
+        assert_eq!(layouts.resolve(Kind::Workflow, "pre-commit"), Layout::Flat);
+    }
+
+    #[test]
+    fn a_rule_names_one_kind_without_disturbing_the_other() {
+        let layouts = Layouts {
+            workflows: Some(Layout::DirectoryIndex),
+            ..Layouts::default()
+        };
+
+        assert_eq!(
+            laid_out(WORKFLOW, Some("docs"), Placement::Beside, &layouts).plans[1].path,
+            PathBuf::from("docs/workflows/lint/index.md")
+        );
+        assert_eq!(
+            laid_out(MANIFEST, Some("docs"), Placement::Beside, &layouts).plans[1].path,
+            PathBuf::from("docs/actions/pre-commit.md")
+        );
+    }
+
+    #[test]
+    fn a_repository_that_states_one_shape_is_recognised_as_uniform() {
+        assert!(Layouts::default().is_uniform());
+        assert!(Layouts::uniform(Layout::DirectoryIndex).is_uniform());
+        assert!(
+            !Layouts {
+                workflows: Some(Layout::Flat),
+                ..Layouts::default()
+            }
+            .is_uniform()
+        );
+    }
+
+    #[test]
+    fn one_word_and_a_table_are_both_accepted() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            layout: Layouts,
+        }
+
+        let word: Wrapper = toml::from_str("layout = \"directory-index\"\n").unwrap();
+        assert_eq!(word.layout, Layouts::uniform(Layout::DirectoryIndex));
+
+        let table: Wrapper =
+            toml::from_str("[layout]\ndefault = \"flat\"\nworkflows = \"directory\"\n").unwrap();
+        assert_eq!(table.layout.default, Layout::Flat);
+        assert_eq!(table.layout.workflows, Some(Layout::Directory));
+    }
+
+    #[test]
+    fn a_flat_layout_has_no_file_name_to_argue_about() {
+        // The entry file is a property of having a directory, so it is spelled
+        // into the layout rather than alongside it. There is no form of this
+        // setting that pairs `flat` with a name, which is why nothing has to
+        // validate against one.
+        for rejected in [
+            "{ entry = \"index\" }",
+            "{ default = \"flat\", entry = \"index\" }",
+            "\"flat-index\"",
+            "\"flat-readme\"",
+        ] {
+            let document = format!("layout = {rejected}\n");
+            let parsed: Result<BTreeMap<String, Layouts>, _> = toml::from_str(&document);
+
+            assert!(parsed.is_err(), "accepted {rejected}");
+        }
+    }
+
+    #[test]
+    fn a_named_target_is_spelled_the_way_the_table_nests_it() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            layout: Layouts,
+        }
+
+        let parsed: Wrapper = toml::from_str(
+            "[layout]\ndefault = \"flat\"\n\n[layout.action]\npre-commit = \"directory\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            parsed.layout.resolve(Kind::Action, "pre-commit"),
+            Layout::Directory
+        );
+        assert_eq!(parsed.layout.resolve(Kind::Action, "other"), Layout::Flat);
     }
 }

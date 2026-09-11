@@ -21,7 +21,7 @@ use actdocs_rs::config::Config;
 use actdocs_rs::parse::{self, Document};
 use actdocs_rs::render::{table, usage};
 use actdocs_rs::sync;
-use actdocs_rs::target::Placement;
+use actdocs_rs::target::{Layout as DocsLayout, Layouts, Placement};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -62,9 +62,21 @@ struct SyncArgs {
     /// Also write documentation under this directory, mirroring the source
     /// layout as `<DIR>/actions/<name>.md` and `<DIR>/workflows/<name>.md`.
     ///
-    /// Without it, only the document beside each source is written.
+    /// Without it, only the document beside each source is written. See
+    /// `--docs-dir-layout` to give each document a directory instead.
     #[arg(long, value_name = "DIR")]
     docs_dir_target: Option<PathBuf>,
+
+    /// The shape of each mirrored document [default: flat].
+    ///
+    /// `flat` writes `<DIR>/actions/<name>.md`. `directory` and
+    /// `directory-index` write `<DIR>/actions/<name>/README.md` and
+    /// `.../index.md` respectively, so that screenshots and sub-pages have
+    /// somewhere to live beside the document. Only the mirror is affected; the
+    /// document beside the source keeps GitHub's layout. Per-kind and
+    /// per-target rules are available from a configuration file only.
+    #[arg(long, value_enum)]
+    docs_dir_layout: Option<Layout>,
 
     /// Where workflow documents are written [default: beside].
     ///
@@ -181,6 +193,25 @@ impl From<WorkflowDocs> for Placement {
     }
 }
 
+/// Mirrors `target::Layout`, for the same reason `Pin` is mirrored: the library
+/// stays free of a command line parser it has no other use for.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Layout {
+    Flat,
+    Directory,
+    DirectoryIndex,
+}
+
+impl From<Layout> for Layouts {
+    fn from(layout: Layout) -> Self {
+        Self::uniform(match layout {
+            Layout::Flat => DocsLayout::Flat,
+            Layout::Directory => DocsLayout::Directory,
+            Layout::DirectoryIndex => DocsLayout::DirectoryIndex,
+        })
+    }
+}
+
 /// Whether the run left the working tree as it found it.
 ///
 /// Nothing constructs these until the commands are implemented.
@@ -212,6 +243,7 @@ fn sync(args: SyncArgs) -> Result<Outcome> {
     // than a pile of conditionals. Clap has already resolved flag-over-env.
     let cli = Config {
         docs_dir_target: args.docs_dir_target,
+        docs_dir_layout: args.docs_dir_layout.map(Into::into),
         index_target: args.index_target,
         hooks_target: args.hooks_target,
         workflow_docs: args.workflow_docs.map(Into::into),

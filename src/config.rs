@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 use crate::render::usage::Pin;
 use crate::sync::Options;
-use crate::target::Placement;
+use crate::target::{Layouts, Placement};
 
 /// Where a configuration file is looked for, in the order it is preferred.
 ///
@@ -51,6 +51,7 @@ const REF_VERSION: &str = "<version>";
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
     pub docs_dir_target: Option<PathBuf>,
+    pub docs_dir_layout: Option<Layouts>,
     pub index_target: Option<PathBuf>,
     pub hooks_target: Option<PathBuf>,
     pub workflow_docs: Option<Placement>,
@@ -105,6 +106,7 @@ impl Config {
     pub fn or(self, fallback: Self) -> Self {
         Self {
             docs_dir_target: self.docs_dir_target.or(fallback.docs_dir_target),
+            docs_dir_layout: self.docs_dir_layout.or(fallback.docs_dir_layout),
             index_target: self.index_target.or(fallback.index_target),
             hooks_target: self.hooks_target.or(fallback.hooks_target),
             workflow_docs: self.workflow_docs.or(fallback.workflow_docs),
@@ -136,6 +138,7 @@ impl Config {
         Ok(Options {
             root,
             docs_dir: self.docs_dir_target,
+            docs_dir_layout: self.docs_dir_layout.unwrap_or_default(),
             index: self.index_target,
             hooks: self.hooks_target,
             workflow_docs,
@@ -155,6 +158,7 @@ fn parse(text: &str, path: &Path) -> Result<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::target::Layout;
 
     fn repository(files: &[(&str, &str)]) -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
@@ -386,6 +390,83 @@ mod tests {
         assert_eq!(
             loaded(root.path()).0.workflow_docs,
             Some(Placement::DocsDir)
+        );
+    }
+
+    #[test]
+    fn a_layout_is_stated_as_one_word_or_as_a_table() {
+        let word = repository(&[(".actdocs.toml", "docs-dir-layout = \"directory\"\n")]);
+        assert_eq!(
+            loaded(word.path()).0.docs_dir_layout,
+            Some(Layouts::uniform(Layout::Directory))
+        );
+
+        let table = repository(&[(
+            ".actdocs.toml",
+            "[docs-dir-layout]\ndefault = \"flat\"\nworkflows = \"directory-index\"\n",
+        )]);
+        let layouts = loaded(table.path()).0.docs_dir_layout.unwrap();
+
+        assert_eq!(layouts.default, Layout::Flat);
+        assert_eq!(layouts.workflows, Some(Layout::DirectoryIndex));
+    }
+
+    #[test]
+    fn an_unstated_layout_settles_on_the_one_that_changes_nothing() {
+        // Flat is what every existing repository already has on disk, so a run
+        // that says nothing about layout keeps writing where it always did.
+        let options = Config::default()
+            .into_options(PathBuf::from("."), false)
+            .unwrap();
+
+        assert_eq!(options.docs_dir_layout, Layouts::default());
+        assert_eq!(options.docs_dir_layout.default, Layout::Flat);
+    }
+
+    #[test]
+    fn a_misspelled_layout_key_is_rejected_rather_than_ignored() {
+        let root = repository(&[(
+            ".actdocs.toml",
+            "[docs-dir-layout]\nworkflow_docs = \"flat\"\n",
+        )]);
+
+        assert!(Config::load(root.path(), None, &mut Vec::new()).is_err());
+    }
+
+    #[test]
+    fn the_documented_layout_example_is_accepted_as_written() {
+        // Lifted from docs/usage/configuration.md. A sample that does not parse
+        // is worse than none, because it is copied before it is tested.
+        let root = repository(&[(
+            ".actdocs.toml",
+            "[docs-dir-layout]\n\
+             default = \"flat\"\n\
+             workflows = \"directory\"\n\
+             \n\
+             [docs-dir-layout.action]\n\
+             setup-toolchain = \"directory-index\"\n\
+             \n\
+             [docs-dir-layout.workflow]\n\
+             release = \"flat\"\n",
+        )]);
+
+        let layouts = loaded(root.path()).0.docs_dir_layout.unwrap();
+
+        assert_eq!(
+            layouts.resolve(crate::target::Kind::Action, "setup-toolchain"),
+            Layout::DirectoryIndex
+        );
+        assert_eq!(
+            layouts.resolve(crate::target::Kind::Workflow, "release"),
+            Layout::Flat
+        );
+        assert_eq!(
+            layouts.resolve(crate::target::Kind::Workflow, "other"),
+            Layout::Directory
+        );
+        assert_eq!(
+            layouts.resolve(crate::target::Kind::Action, "other"),
+            Layout::Flat
         );
     }
 }
