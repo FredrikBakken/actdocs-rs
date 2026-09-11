@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use crate::doc::{self, Update};
 use crate::parse::{self, Document};
 use crate::render::{hooks, index, table, usage};
-use crate::target::{self, Kind, Placement, Plan, Target};
+use crate::target::{self, Kind, Layouts, Placement, Plan, Target};
 
 /// Generated documents leave out sections with no entries, so an action with
 /// no outputs says nothing about outputs rather than showing an empty table.
@@ -44,6 +44,9 @@ pub struct Options {
     /// Also write documentation under this directory, mirroring the source
     /// layout. `None` means only the document beside each source is written.
     pub docs_dir: Option<PathBuf>,
+    /// The shape of each mirrored document under `docs_dir`. Ignored where no
+    /// documentation root was named, since nothing is mirrored.
+    pub docs_dir_layout: Layouts,
     /// Rebuild the repository index in this document, resolved against `root`.
     /// `None` means no index is written.
     pub index: Option<PathBuf>,
@@ -112,8 +115,12 @@ fn document(
     let Some(parsed) = read(&options.root, source)? else {
         return Ok(());
     };
-    let Some(target) = target::classify(source, options.docs_dir.as_deref(), options.workflow_docs)
-    else {
+    let Some(target) = target::classify(
+        source,
+        options.docs_dir.as_deref(),
+        options.workflow_docs,
+        &options.docs_dir_layout,
+    ) else {
         writeln!(
             log,
             "{}: not a path this tool can document",
@@ -137,16 +144,22 @@ fn document(
     // Only worth saying when the file is actually there. A remark on every run
     // in every repository that never had one is noise, and noise on stderr is
     // how real diagnostics get scrolled past.
-    let orphan = target
-        .orphan
-        .as_ref()
-        .filter(|orphan| options.root.join(orphan).exists());
-    if let Some(orphan) = orphan {
+    //
+    // Reported and kept, never deleted: a stranded document is where the
+    // hand-written prose around the markers ended up, and removing it would
+    // throw away work this tool did not do. The run fails so that the file is
+    // dealt with deliberately rather than left to rot beside its replacement.
+    for orphan in &target.orphans {
+        if !options.root.join(&orphan.path).exists() {
+            continue;
+        }
         writeln!(
             log,
-            "{}: no longer updated, because workflow documents are configured for docs-dir",
-            orphan.display()
+            "{}: no longer updated, because {} — move anything worth keeping and delete it",
+            orphan.path.display(),
+            orphan.reason.explanation(),
         )?;
+        report.unwritable = true;
     }
 
     for plan in &target.plans {
@@ -283,9 +296,12 @@ fn entries(sources: &[PathBuf], options: &Options) -> Result<Vec<index::Entry>> 
         let Some(parsed) = read(&options.root, source)? else {
             continue;
         };
-        let Some(target) =
-            target::classify(source, options.docs_dir.as_deref(), options.workflow_docs)
-        else {
+        let Some(target) = target::classify(
+            source,
+            options.docs_dir.as_deref(),
+            options.workflow_docs,
+            &options.docs_dir_layout,
+        ) else {
             continue;
         };
 
@@ -377,6 +393,7 @@ fn is_consistent(parsed: &Document, kind: Kind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::target::Layout;
 
     const ACTION: &str = "\
 name: Pre-commit
@@ -408,6 +425,7 @@ runs:
         Options {
             root: root.to_path_buf(),
             docs_dir: None,
+            docs_dir_layout: Layouts::default(),
             index: None,
             hooks: None,
             workflow_docs: Placement::default(),
@@ -765,6 +783,72 @@ runs:
             fs::read_to_string(&orphan).unwrap(),
             "# Written by an earlier run\n"
         );
+    }
+
+    #[test]
+    fn a_stranded_document_fails_the_run_rather_than_being_mentioned_in_passing() {
+        let root = repository();
+        reusable(root.path());
+        fs::write(
+            root.path().join(".github/workflows/release.md"),
+            "# Written by an earlier run\n",
+        )
+        .unwrap();
+
+        let mut log = Vec::new();
+        let report = run(
+            &[PathBuf::from(".github/workflows/release.yml")],
+            &moved(root.path()),
+            &mut log,
+        )
+        .unwrap();
+
+        assert!(report.unwritable);
+        assert!(!report.is_clean());
+    }
+
+    #[test]
+    fn changing_the_layout_strands_the_previous_shape() {
+        let root = repository();
+        let stale = root.path().join("docs/actions/pre-commit.md");
+        fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        fs::write(&stale, "# From a flat run\n").unwrap();
+
+        let options = Options {
+            docs_dir: Some(PathBuf::from("docs")),
+            docs_dir_layout: Layouts::uniform(Layout::Directory),
+            ..options(root.path())
+        };
+        let mut log = Vec::new();
+        let report = run(&[PathBuf::from(MANIFEST)], &options, &mut log).unwrap();
+        let log = String::from_utf8(log).unwrap();
+
+        assert!(report.unwritable, "got {log}");
+        assert!(log.contains("docs/actions/pre-commit.md"), "got {log}");
+        // The new shape is still written, so the run is not simply refused.
+        assert!(
+            root.path()
+                .join("docs/actions/pre-commit/README.md")
+                .is_file()
+        );
+        // And the old one is left exactly as it was found.
+        assert_eq!(fs::read_to_string(&stale).unwrap(), "# From a flat run\n");
+    }
+
+    #[test]
+    fn a_layout_that_was_never_used_is_not_worth_mentioning() {
+        let root = repository();
+        let options = Options {
+            docs_dir: Some(PathBuf::from("docs")),
+            docs_dir_layout: Layouts::uniform(Layout::DirectoryIndex),
+            ..options(root.path())
+        };
+
+        let mut log = Vec::new();
+        let report = run(&[PathBuf::from(MANIFEST)], &options, &mut log).unwrap();
+
+        assert!(report.is_clean());
+        assert!(String::from_utf8(log).unwrap().is_empty());
     }
 
     #[test]

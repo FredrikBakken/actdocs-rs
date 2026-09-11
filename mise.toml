@@ -6,6 +6,11 @@ uv = "0.12.9"
 [env]
 ZENSICAL_VERSION = "0.0.60"
 
+[hooks]
+postinstall = [
+    "command -v prek >/dev/null || prek install --force",
+]
+
 [tasks."update"]
 description = "Update dependencies and regenerate lockfiles"
 run = [

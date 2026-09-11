@@ -89,6 +89,74 @@ fn a_mirror_appears_only_when_asked_for() {
 }
 
 #[test]
+fn a_layout_gives_each_mirrored_document_a_directory() {
+    let root = repository();
+
+    sync(
+        root.path(),
+        &[
+            "--docs-dir-target",
+            "docs",
+            "--docs-dir-layout",
+            "directory",
+        ],
+    );
+    assert!(
+        root.path()
+            .join("docs/actions/pre-commit/README.md")
+            .exists()
+    );
+
+    let root = repository();
+    sync(
+        root.path(),
+        &[
+            "--docs-dir-target",
+            "docs",
+            "--docs-dir-layout",
+            "directory-index",
+        ],
+    );
+    assert!(
+        root.path()
+            .join("docs/actions/pre-commit/index.md")
+            .exists()
+    );
+}
+
+#[test]
+fn a_document_stranded_by_a_layout_change_fails_the_run() {
+    let root = repository();
+    sync(root.path(), &["--docs-dir-target", "docs"]);
+    assert!(root.path().join("docs/actions/pre-commit.md").exists());
+
+    let output = sync(
+        root.path(),
+        &[
+            "--docs-dir-target",
+            "docs",
+            "--docs-dir-layout",
+            "directory",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Reported and kept, so the prose around the markers is not lost, and the
+    // run fails so that it is dealt with rather than quietly left behind.
+    assert_eq!(code(&output), 1, "{stderr}");
+    assert!(
+        stderr.contains("docs/actions/pre-commit.md"),
+        "got {stderr}"
+    );
+    assert!(root.path().join("docs/actions/pre-commit.md").exists());
+    assert!(
+        root.path()
+            .join("docs/actions/pre-commit/README.md")
+            .exists()
+    );
+}
+
+#[test]
 fn checking_an_unwritten_repository_reports_a_difference() {
     let root = repository();
     let output = sync(root.path(), &["--check"]);
