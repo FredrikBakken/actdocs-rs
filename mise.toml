@@ -7,15 +7,14 @@ uv = "0.12.9"
 ZENSICAL_VERSION = "0.0.60"
 
 [hooks]
-postinstall = [
-    "command -v prek >/dev/null || prek install --force",
-]
+postinstall = "prek install"
 
 [tasks."update"]
 description = "Update dependencies and regenerate lockfiles"
 run = [
     "mise upgrade --local --bump",
     "mise lock",
+    "prek install",
     "prek update --refresh",
     "prek run --all-files",
 ]
